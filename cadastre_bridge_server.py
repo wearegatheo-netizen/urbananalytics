@@ -69,11 +69,22 @@ def json_response(handler, payload, status=200):
     handler.wfile.write(data)
 
 
-def http_get_json(url, params):
-    query = urllib.parse.urlencode(params)
-    req = urllib.request.Request(f"{url}?{query}", headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=30) as res:
-        return json.loads(res.read().decode("utf-8", errors="replace"))
+def http_get_json(url, params, retries=4):
+    # VWorld는 짧은 시간에 호출이 몰리면 일시 차단(INCORRECT_KEY=XML)·과부하 응답을 준다.
+    # 비정상 응답이면 백오프 후 재시도하여 버스트 차단을 흡수한다.
+    full = f"{url}?{urllib.parse.urlencode(params)}"
+    last = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(full, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as res:
+                text = res.read().decode("utf-8", errors="replace")
+            return json.loads(text)
+        except Exception as exc:
+            last = exc
+            if attempt < retries - 1:
+                time.sleep(0.5 * (attempt + 1))
+    raise last
 
 
 def geocode(address, api_key):
@@ -222,21 +233,22 @@ def build_cadastre_dxf(address, api_key, radius, domain=""):
         if dom:
             params["DOMAIN"] = dom
         url = "https://api.vworld.kr/req/wfs?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as res:
-                raw = res.read().decode("utf-8", errors="replace")
-        except Exception as exc:
-            fetch_errors.append(f"{typename}: {type(exc).__name__} {str(exc)[:140]}")
-            return [], maxf
-        try:
-            feats = json.loads(raw).get("features")
-            return (feats or []), maxf
-        except Exception:
-            exc_match = re.search(r"<ServiceException[^>]*>(.*?)</ServiceException>", raw, re.S)
-            msg = exc_match.group(1).strip() if exc_match else raw[:200]
-            fetch_errors.append(f"{typename}: {msg[:240]}")
-            return [], maxf
+        last_msg = ""
+        for attempt in range(4):
+            raw = ""
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=30) as res:
+                    raw = res.read().decode("utf-8", errors="replace")
+                feats = json.loads(raw).get("features")
+                return (feats or []), maxf
+            except Exception as exc:
+                match = re.search(r"<ServiceException[^>]*>(.*?)</ServiceException>", raw, re.S) if raw else None
+                last_msg = match.group(1).strip() if match else f"{type(exc).__name__} {str(exc)[:140]}"
+                if attempt < 3:
+                    time.sleep(0.5 * (attempt + 1))
+        fetch_errors.append(f"{typename}: {last_msg[:240]}")
+        return [], maxf
 
     bubun, mb = fetch("lp_pa_cbnd_bubun", 1000)
     bonbun, _ = fetch("lp_pa_cbnd_bonbun", 1000)

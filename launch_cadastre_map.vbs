@@ -19,6 +19,10 @@ Else
     command = "python """ & script & """ 8788"
 End If
 
+' VWorld WFS(2D데이터 API)는 호출 도메인을 검증한다. 이 키에 등록된 도메인을 전달해야
+' 지번 선택·선택필지 분석이 동작한다.(다른 도메인을 등록했다면 아래 값을 바꾸세요)
+shell.Environment("Process")("VWORLD_DOMAIN") = "urbananalytics-qqbh.onrender.com"
+
 shell.CurrentDirectory = folder
 shell.Run command, 0, False
 WScript.Sleep 1500
