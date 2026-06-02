@@ -41,6 +41,14 @@ JOBS = {}
 # 웹 모드에서는 폴더 선택 대화상자·QGIS 연속지적 실행 등 데스크톱 전용 기능을 비활성화한다.
 WEB_MODE = bool(os.environ.get("PORT")) or os.name != "nt"
 
+# 요청별 컨텍스트(스레드-로컬): VWorld WFS(2D데이터 API)는 호출 도메인을 검증하므로,
+# 페이지에 접속한 도메인(요청 Host/Origin)을 WFS 요청의 DOMAIN 파라미터로 자동 전달한다.
+_request_ctx = threading.local()
+
+
+def current_vworld_domain():
+    return getattr(_request_ctx, "domain", "") or ""
+
 
 def cors_headers(handler, status=200, content_type="application/json"):
     handler.send_response(status)
@@ -187,7 +195,7 @@ def deg_box(lat, lon, radius_m):
     return lon - dlon, lat - dlat, lon + dlon, lat + dlat
 
 
-def build_cadastre_dxf(address, api_key, radius):
+def build_cadastre_dxf(address, api_key, radius, domain=""):
     """반경 내 연속지적(필지)+용도지역을 VWorld WFS로 모아 EPSG:5186 좌표의 DXF로 생성(웹용, QGIS 불필요)."""
     if not api_key:
         raise ValueError("연속지적 DXF에는 VWorld API 키가 필요합니다.")
@@ -209,6 +217,9 @@ def build_cadastre_dxf(address, api_key, radius):
             "MAXFEATURES": str(maxf), "SRSNAME": "EPSG:4326", "OUTPUT": "json",
             "BBOX": f"{minx},{miny},{maxx},{maxy}", "KEY": api_key,
         }
+        dom = domain or current_vworld_domain()
+        if dom:
+            params["DOMAIN"] = dom
         url = "https://api.vworld.kr/req/wfs?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         try:
@@ -328,6 +339,7 @@ def get_parcel_feature(lat, lon, api_key):
                 "OUTPUT": "json",
                 "BBOX": f"{lon - delta},{lat - delta},{lon + delta},{lat + delta}",
                 "KEY": api_key,
+                "DOMAIN": current_vworld_domain(),
             }
             try:
                 data = http_get_json("https://api.vworld.kr/req/wfs", params)
@@ -568,6 +580,7 @@ def get_landuse(lat, lon, api_key):
         "REQUEST": "GetFeature", "TYPENAME": "lt_c_uq111", "VERSION": "1.1.0",
         "MAXFEATURES": "30", "SRSNAME": "EPSG:4326", "OUTPUT": "json",
         "BBOX": f"{lon - delta},{lat - delta},{lon + delta},{lat + delta}", "KEY": api_key,
+        "DOMAIN": current_vworld_domain(),
     }
     try:
         data = http_get_json("https://api.vworld.kr/req/wfs", params)
@@ -663,6 +676,7 @@ def jimok_road_width(subject_ring, lat, lon, api_key):
             "REQUEST": "GetFeature", "TYPENAME": typename, "VERSION": "1.1.0",
             "MAXFEATURES": "60", "SRSNAME": "EPSG:4326", "OUTPUT": "json",
             "BBOX": f"{lon - delta},{lat - delta},{lon + delta},{lat + delta}", "KEY": api_key,
+            "DOMAIN": current_vworld_domain(),
         }
         try:
             data = http_get_json("https://api.vworld.kr/req/wfs", params)
@@ -701,6 +715,7 @@ def upis_road_width(lat, lon, api_key):
         "REQUEST": "GetFeature", "TYPENAME": "lt_c_upisuq153", "VERSION": "1.1.0",
         "MAXFEATURES": "40", "SRSNAME": "EPSG:4326", "OUTPUT": "json",
         "BBOX": f"{lon - delta},{lat - delta},{lon + delta},{lat + delta}", "KEY": api_key,
+        "DOMAIN": current_vworld_domain(),
     }
     try:
         data = http_get_json("https://api.vworld.kr/req/wfs", params)
@@ -1861,7 +1876,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
         cors_headers(self)
         self.end_headers()
 
+    def _set_request_domain(self):
+        # 페이지 접속 도메인을 VWorld WFS DOMAIN으로 사용(포트 제외).
+        host = self.headers.get("Host") or ""
+        origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
+        if origin:
+            try:
+                host = urllib.parse.urlparse(origin).netloc or host
+            except Exception:
+                pass
+        _request_ctx.domain = host.split(":")[0].strip()
+
     def do_GET(self):
+        self._set_request_domain()
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         qs = urllib.parse.parse_qs(parsed.query)
@@ -1903,7 +1930,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 address = qs.get("address", [""])[0].strip()
                 api_key = qs.get("apiKey", [""])[0].strip()
                 radius = qs.get("radius", ["300"])[0]
-                result = build_cadastre_dxf(address, api_key, radius)
+                domain = qs.get("domain", [""])[0].strip()
+                result = build_cadastre_dxf(address, api_key, radius, domain=domain)
                 data = result["data"]
                 cors_headers(self, content_type="application/dxf")
                 fname = urllib.parse.quote(f"연속지적_{result['refined']}_{result['radius']}m.dxf".replace(" ", "_"))
@@ -1968,6 +1996,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             json_response(self, {"ok": False, "error": str(exc)}, status=500)
 
     def do_POST(self):
+        self._set_request_domain()
         parsed = urllib.parse.urlparse(self.path)
         try:
             length = int(self.headers.get("Content-Length", "0"))
