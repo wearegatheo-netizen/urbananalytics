@@ -828,7 +828,8 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const bridgeBase = "http://127.0.0.1:8788";
+    // 같은 출처(브릿지가 HTML을 직접 서빙)에서 API 호출 — 로컬(127.0.0.1:8788)·호스팅 도메인 모두 동작
+    const bridgeBase = "";
     const target = [37.4939, 127.1198];
     const $ = (id) => document.getElementById(id);
     const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -1609,6 +1610,15 @@
     // UI/UX 보강 (기존 로직과 분리된 IIFE, 전역 충돌 없음)
     (function () {
       const byId = (id) => document.getElementById(id);
+
+      // 웹(호스팅) 모드 감지: 로컬이 아니면 데스크톱 전용 기능(연속지적 실행·폴더 선택)을 숨긴다.
+      const isLocal = ["127.0.0.1", "localhost", ""].includes(location.hostname) || location.protocol === "file:";
+      if (!isLocal) {
+        const cc = byId("cardCadastre");
+        if (cc) cc.style.display = "none";
+        const st = byId("status");
+        if (st) st.textContent = "웹 버전입니다. 주소→위치도·지적도 보기, 지번 선택, 블록 평균높이 산정·엑셀 보고서를 사용할 수 있습니다.\n(연속지적 DXF 생성은 데스크톱 전용)";
+      }
 
       // 1) 패널 접기/펴기 — 지도를 넓게 보고 싶을 때
       const panel = byId("bridgePanel");

@@ -1,0 +1,16 @@
+.git/
+__pycache__/
+*.pyc
+*.log
+location_map_*.png
+test_*.png
+source.pdf
+*.zip
+extracted_images/
+rendered_report/
+rendered_template/
+test_outputs/
+dist/app/outputs/
+**/chrome_vworld_profile/
+**/browser_downloads/
+**/parcel_list_uploads/

@@ -1,0 +1,9 @@
+# Render.com 배포 청사진 (Docker). github 연결 후 Blueprint로 자동 생성됨.
+services:
+  - type: web
+    name: urbananalytics
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true

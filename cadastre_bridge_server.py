@@ -3,6 +3,7 @@ import math
 import base64
 import csv
 import io
+import os
 import re
 import mimetypes
 import subprocess
@@ -35,6 +36,10 @@ CARTO_VOYAGER_TILE_URL = "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z
 CARTO_LIGHT_NOLABEL_TILE_URL = "https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png"
 
 JOBS = {}
+
+# 클라우드(컨테이너) 배포 모드: PORT 환경변수가 있거나 비-Windows이면 웹 모드로 간주.
+# 웹 모드에서는 폴더 선택 대화상자·QGIS 연속지적 실행 등 데스크톱 전용 기능을 비활성화한다.
+WEB_MODE = bool(os.environ.get("PORT")) or os.name != "nt"
 
 
 def cors_headers(handler, status=200, content_type="application/json"):
@@ -952,6 +957,9 @@ def load_font(size, bold=False):
     candidates = [
         Path("C:/Windows/Fonts/malgunbd.ttf" if bold else "C:/Windows/Fonts/malgun.ttf"),
         Path("C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf"),
+        # Linux(컨테이너) 한글 폰트 — Dockerfile에서 fonts-nanum 설치
+        Path("/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf" if bold else "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -1819,6 +1827,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
             if parsed.path == "/api/run-cadastre":
+                if WEB_MODE:
+                    json_response(self, {"ok": False, "error": "연속지적 실행(QGIS·다운로드)은 데스크톱 실행 전용입니다. 바탕화면 아이콘으로 실행해 주세요."}, status=400)
+                    return
                 job_id, log_path, out_dir = start_cadastre_job(payload)
                 json_response(self, {"ok": True, "jobId": job_id, "logPath": str(log_path), "outDir": str(out_dir)})
                 return
@@ -1840,6 +1851,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 json_response(self, {"ok": True, **result})
                 return
             if parsed.path == "/api/select-folder":
+                if WEB_MODE:
+                    json_response(self, {"ok": False, "error": "폴더 선택은 데스크톱 실행 전용입니다."}, status=400)
+                    return
                 path = select_folder(payload.get("initialDir", ""))
                 json_response(self, {"ok": True, "path": path})
                 return
@@ -1875,10 +1889,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8788
-    server = ThreadingHTTPServer(("127.0.0.1", port), BridgeHandler)
+    # 배포 환경: PORT 환경변수 사용 + 0.0.0.0 바인딩. 로컬: 127.0.0.1:8788.
+    env_port = os.environ.get("PORT")
+    port = int(env_port) if env_port else (int(sys.argv[1]) if len(sys.argv) > 1 else 8788)
+    host = "0.0.0.0" if (env_port or os.name != "nt") else "127.0.0.1"
+    server = ThreadingHTTPServer((host, port), BridgeHandler)
     if sys.stdout:
-        print(f"Cadastre bridge running: http://127.0.0.1:{port}/", flush=True)
+        print(f"Cadastre bridge running: http://{host}:{port}/", flush=True)
     server.serve_forever()
 
 
