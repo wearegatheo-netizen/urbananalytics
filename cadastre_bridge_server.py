@@ -757,20 +757,60 @@ def upis_road_width(lat, lon, api_key):
     return None
 
 
-def boundary_frontage(subject_segments, road_segments, threshold):
-    """subject 경계 세그먼트 중 road(세그먼트 집합)에 threshold(m) 이내로 접한 길이 합 + 최소거리."""
-    frontage = 0.0
+def boundary_frontage(subject_segments, road_segments, threshold, max_turn_deg=45.0):
+    """subject 경계 중 road에 접한 '한 면'의 길이(가장 긴 연속 접면) + 최소거리.
+       코너 필지가 한 도로에 두 면 접해도, 방향이 급변(>max_turn)하면 면을 나눠
+       주 도로 한 면만 산정한다(여러 면 합산 금지)."""
+    n = len(subject_segments)
+    if n == 0:
+        return 0.0, 1e9
+    near = []
+    length = []
+    bearing = []
     min_dist = None
     for p1, p2 in subject_segments:
-        near = False
+        length.append(segment_length(p1, p2))
+        bearing.append(math.atan2(p2[1] - p1[1], p2[0] - p1[0]))
+        is_near = False
         for r1, r2 in road_segments:
             d = segment_distance(p1, p2, r1, r2)
             min_dist = d if min_dist is None else min(min_dist, d)
             if d <= threshold:
-                near = True
-        if near:
-            frontage += segment_length(p1, p2)
-    return frontage, (min_dist if min_dist is not None else 1e9)
+                is_near = True
+        near.append(is_near)
+    md = min_dist if min_dist is not None else 1e9
+    if not any(near):
+        return 0.0, md
+
+    max_turn = math.radians(max_turn_deg)
+
+    def ang_diff(a, b):
+        d = abs(a - b) % (2 * math.pi)
+        return min(d, 2 * math.pi - d)
+
+    # 접면 사이의 경계(비접 세그먼트)에서 시작하도록 회전(원형 wrap 안전 처리)
+    start = 0
+    if not all(near):
+        while near[start]:
+            start = (start + 1) % n
+    # 도로 방향(라인 방향, 0~pi)으로 정규화: 진행 방향 반대도 같은 면으로 간주
+    best = 0.0
+    cur = 0.0
+    prev_b = None
+    for k in range(n):
+        i = (start + k) % n
+        if near[i]:
+            b = bearing[i] % math.pi  # 선분 방향(180° 주기)
+            if prev_b is not None and min(abs(b - prev_b), math.pi - abs(b - prev_b)) > max_turn:
+                cur = length[i]       # 방향 급변 → 새 면 시작
+            else:
+                cur += length[i]
+            best = max(best, cur)
+            prev_b = b
+        else:
+            cur = 0.0
+            prev_b = None
+    return best, md
 
 
 def _wfs_features(typename, lat, lon, api_key, delta=0.0004, maxf=60):
