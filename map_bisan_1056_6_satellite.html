@@ -953,6 +953,7 @@
     const parcelPickMarkers = [];
     let nextGroupId = 1;            // 각 필지는 처음엔 단독 획지
     const pickSelection = new Set(); // 묶기용으로 체크된 필지 인덱스
+    let pickingBusy = false;         // 클릭 처리 중복 방지(연속 클릭 시 버스트 차단 회피)
     let lastHeightRows = [];
     let lastHeightTotals = null;
 
@@ -1185,69 +1186,84 @@
       renderParcelPickList();
     }
 
-    async function highlightSelectedParcel(latlng, apiKey) {
-      const params = new URLSearchParams({
-        lat: String(latlng.lat),
-        lon: String(latlng.lng),
-        apiKey
-      });
+    function parcelLabelFromProps(props) {
+      if (!props) return "";
+      if (props.addr && String(props.addr).trim()) return String(props.addr).trim();
+      const jibun = String(props.jibun || "").replace(/[가-힣]+$/, "").trim(); // 끝의 지목 글자 제거
+      const head = [props.ctp_nm, props.sig_nm, props.emd_nm, props.li_nm].filter(Boolean).join(" ");
+      return (head + " " + jibun).trim();
+    }
+
+    async function fetchParcelFeature(latlng, apiKey) {
+      const params = new URLSearchParams({ lat: String(latlng.lat), lon: String(latlng.lng), apiKey });
       const res = await fetch(`${bridgeBase}/api/parcel-feature?${params.toString()}`);
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || "지적도 도형 조회 실패");
-      const featureLayer = L.geoJSON(json.feature, {
-        pane: "selectedParcelPane",
-        style: {
-          color: "#ff2a00",
-          weight: 3,
-          opacity: 1,
-          fillColor: "#ff2a00",
-          fillOpacity: 0.24
-        },
-        interactive: false
-      }).addTo(selectedParcelLayer);
-      return featureLayer;
+      return json.feature;
+    }
+
+    async function reverseParcelText(latlng, apiKey) {
+      const params = new URLSearchParams({ lat: String(latlng.lat), lon: String(latlng.lng), apiKey });
+      const res = await fetch(`${bridgeBase}/api/reverse-parcel?${params.toString()}`);
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || "지번 조회 실패");
+      return json.parcel;
     }
 
     async function pickParcelFromMap(event) {
       if (!document.querySelector(".js-pickmode:checked")) return;
+      if (pickingBusy) { status("이전 선택을 처리 중입니다. 잠시 후 클릭하세요."); return; }
+      pickingBusy = true;
       try {
         const data = values();
         if (!data.apiKey) throw new Error("지도에서 지번을 선택하려면 VWorld API 키가 필요합니다.");
         if (!(await checkBridge())) return;
-        status("선택한 위치의 지번을 확인하는 중입니다...");
-        const params = new URLSearchParams({
-          lat: String(event.latlng.lat),
-          lon: String(event.latlng.lng),
-          apiKey: data.apiKey
-        });
-        const res = await fetch(`${bridgeBase}/api/reverse-parcel?${params.toString()}`);
-        const json = await res.json();
-        if (!json.ok) throw new Error(json.error || "지번 조회 실패");
-        const key = parcelKey(json.parcel);
-        if (!key) throw new Error("선택한 위치의 지번 번호를 읽지 못했습니다.");
-        if (!pickedParcelKeys.has(key)) {
-          pickedParcelKeys.add(key);
-          const picked = { parcel: json.parcel, lat: event.latlng.lat, lon: event.latlng.lng, layer: null, group: nextGroupId++ };
-          pickedParcels.push(picked);
+        status("선택한 위치의 필지를 확인하는 중입니다...");
+        // 1) 필지 도형 + 지번/주소를 한 번에 (호출 1회로 throttle 완화)
+        let featureJson = null;
+        let parcelText = "";
+        try {
+          featureJson = await fetchParcelFeature(event.latlng, data.apiKey);
+          const props = ((featureJson.features || [])[0] || {}).properties || {};
+          parcelText = parcelLabelFromProps(props);
+        } catch (_) { /* 아래에서 역지오코딩으로 보완 */ }
+        // 2) 주소를 못 얻었으면 역지오코딩으로 보완(이중화)
+        if (!parcelText) {
+          try { parcelText = await reverseParcelText(event.latlng, data.apiKey); } catch (_) {}
+        }
+        if (!parcelText) {
+          throw new Error("이 위치의 지번을 찾지 못했습니다. 잠시 후 다시 시도하거나 필지 안쪽을 클릭해 주세요.");
+        }
+        const key = parcelKey(parcelText) || parcelText.replace(/\s+/g, "");
+        if (pickedParcelKeys.has(key)) {
+          status(`이미 선택된 지번입니다.\n${parcelText}`);
+          return;
+        }
+        pickedParcelKeys.add(key);
+        const picked = { parcel: parcelText, lat: event.latlng.lat, lon: event.latlng.lng, layer: null, group: nextGroupId++ };
+        pickedParcels.push(picked);
+        // 도형이 있으면 폴리곤, 없으면 마커
+        if (featureJson) {
           try {
-            picked.layer = await highlightSelectedParcel(event.latlng, data.apiKey);
-          } catch (_) {
-            const marker = L.circleMarker(event.latlng, {
-              radius: 7,
-              color: "#ffffff",
-              weight: 2,
-              fillColor: "#ff2a00",
-              fillOpacity: 0.95,
+            picked.layer = L.geoJSON(featureJson, {
+              pane: "selectedParcelPane",
+              style: { color: "#ff2a00", weight: 3, opacity: 1, fillColor: "#ff2a00", fillOpacity: 0.24 },
               interactive: false
-            }).addTo(map);
-            parcelPickMarkers.push(marker);
-            picked.layer = marker;
-          }
+            }).addTo(selectedParcelLayer);
+          } catch (_) {}
+        }
+        if (!picked.layer) {
+          picked.layer = L.circleMarker(event.latlng, {
+            radius: 7, color: "#ffffff", weight: 2, fillColor: "#ff2a00", fillOpacity: 0.95, interactive: false
+          }).addTo(map);
+          parcelPickMarkers.push(picked.layer);
         }
         renderParcelPickList();
-        status(`선택 지번 추가\n${json.parcel}\n현재 ${pickedParcels.length}개 선택됨`);
+        status(`선택 지번 추가\n${parcelText}\n현재 ${pickedParcels.length}개 선택됨`);
       } catch (error) {
         status(error.message);
+      } finally {
+        pickingBusy = false;
       }
     }
 
