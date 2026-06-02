@@ -47,7 +47,8 @@ _request_ctx = threading.local()
 
 
 def current_vworld_domain():
-    return getattr(_request_ctx, "domain", "") or ""
+    # VWORLD_DOMAIN 환경변수가 있으면 최우선(터널/프록시 환경에서 키 등록 도메인 고정용).
+    return os.environ.get("VWORLD_DOMAIN") or getattr(_request_ctx, "domain", "") or ""
 
 
 def cors_headers(handler, status=200, content_type="application/json"):
