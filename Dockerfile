@@ -1,10 +1,9 @@
 # 연속지적 위치도 브릿지 — 컨테이너 배포용 (Render/Fly/Railway 등)
 FROM python:3.12-slim
 
-# 한글 라벨 렌더용 폰트(나눔) + 폰트 캐시
+# 한글 라벨 렌더용 폰트(나눔). PIL이 절대경로로 직접 로드하므로 fontconfig/fc-cache 불필요.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends fonts-nanum fonts-dejavu-core \
- && fc-cache -f \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
