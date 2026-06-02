@@ -417,6 +417,22 @@
     .pick-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
     .pick-tools .small-button { flex: 1 1 auto; }
 
+    .lot-setback-editor { display: flex; flex-direction: column; gap: 5px; }
+    .lot-sb-row { display: flex; align-items: center; gap: 6px; }
+    .lot-sb-row .lot-sb-name {
+      flex: 1 1 auto; min-width: 0; font-size: 12.5px; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .lot-sb-row .lot-sb-badge {
+      display: inline-block; padding: 1px 6px; border-radius: 7px; margin-right: 5px;
+      font-size: 11px; font-weight: 800; color: #fff; vertical-align: 1px;
+    }
+    .lot-sb-row input {
+      width: 56px; height: 30px; padding: 2px 6px; text-align: right;
+      border: 1px solid var(--line); border-radius: var(--radius-sm); font: inherit; font-size: 12.5px;
+    }
+    .lot-sb-row .sep { color: #999; font-size: 12px; }
+
     .small-button {
       height: 34px;
       padding: 3px 12px;
@@ -826,6 +842,26 @@
               <input id="heightSetbackRear" type="number" min="0" step="0.1" placeholder="획지깊이에서 차감">
             </div>
           </div>
+          <p class="hint">전면/후면 후퇴는 전역 기본값입니다. 획지별로 다르게 적용하려면 아래 ‘획지별 건축선후퇴’에서 개별 지정하세요.</p>
+          <div class="grid-2">
+            <div class="field">
+              <label for="centerRank">중심지 위계</label>
+              <select id="centerRank">
+                <option value="">미지정(상한만 표시)</option>
+                <option value="도심·전략">도심·전략지역(별도)</option>
+                <option value="광역중심">광역중심(±30%)</option>
+                <option value="지역중심">지역중심(±25%)</option>
+                <option value="지구중심">지구중심(±20%)</option>
+                <option value="생활권중심">생활권중심(±15%)</option>
+                <option value="그 외">그 외(±10%)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="centerAdjustPct">위계 조정(%)</label>
+              <input id="centerAdjustPct" type="number" step="1" value="0" placeholder="예: +20, -10">
+            </div>
+          </div>
+          <p class="hint" id="centerRankHint">용도지역×입지(간선/이면) 최고높이 상한에 위계 조정(±%)을 반영해 표시합니다. (도로폭 20m↑ 간선부 / 미만 이면부)</p>
           <div class="field">
             <label for="heightReviewNote">조례/결정도서 확인 메모</label>
             <input id="heightReviewNote" placeholder="예: 서울시 조례 제00조, OO지구단위계획 결정도서 p.00">
@@ -842,6 +878,11 @@
               <button class="small-button js-clear-picks" type="button">전체 지우기</button>
             </div>
             <p class="hint">여러 필지를 체크한 뒤 ‘획지로 묶기’를 누르면, 합쳐진 경계 기준(면적 합·접도길이·깊이)으로 평균높이를 산정합니다.</p>
+          </div>
+          <div class="field" id="lotSetbackBlock" style="display:none">
+            <label>획지별 건축선후퇴(m) — 전면 / 후면</label>
+            <div id="lotSetbackEditor" class="lot-setback-editor"></div>
+            <p class="hint">비워두면 위의 전역 기본 후퇴값을 사용합니다.</p>
           </div>
           <div class="actions">
             <button id="calculateBlockHeight" type="button">파일 리스트 산정</button>
@@ -868,6 +909,8 @@
               <th>접도길이</th>
               <th>필지깊이</th>
               <th>평균높이</th>
+              <th>입지</th>
+              <th>최고높이상한</th>
               <th>체적</th>
               <th>신뢰도</th>
             </tr>
@@ -965,6 +1008,7 @@
     const parcelPickMarkers = [];
     let nextGroupId = 1;            // 각 필지는 처음엔 단독 획지
     const pickSelection = new Set(); // 묶기용으로 체크된 필지 인덱스
+    const lotSetbacks = {};          // 획지(group)별 건축선후퇴 { group: {front, rear} }
     let pickingBusy = false;         // 클릭 처리 중복 방지(연속 클릭 시 버스트 차단 회피)
     let lastHeightRows = [];
     let lastHeightTotals = null;
@@ -1159,7 +1203,55 @@
       document.querySelectorAll(".js-pick-count").forEach((el) => { el.textContent = summary; });
       const allSel = pickedParcels.length > 0 && pickSelection.size === pickedParcels.length;
       document.querySelectorAll(".js-select-all").forEach((b) => { b.textContent = allSel ? "전체 해제" : "전체 선택"; });
+      renderSetbackEditor(groupMembers, hoekjiOrder);
     }
+
+    // 획지(group)별 건축선후퇴 입력 — 평균높이 카드에만 표시
+    function renderSetbackEditor(groupMembers, hoekjiOrder) {
+      const block = $("lotSetbackBlock");
+      const editor = $("lotSetbackEditor");
+      if (!block || !editor) return;
+      // 현재 선택에 존재하는 group만 유지(삭제된 group의 입력값 정리)
+      const liveGroups = new Set(pickedParcels.map((it) => it.group));
+      Object.keys(lotSetbacks).forEach((g) => { if (!liveGroups.has(Number(g)) && !liveGroups.has(g)) delete lotSetbacks[g]; });
+      if (!pickedParcels.length) { block.style.display = "none"; editor.innerHTML = ""; return; }
+      block.style.display = "block";
+      const seen = new Set();
+      const rows = [];
+      pickedParcels.forEach((item) => {
+        if (seen.has(item.group)) return;
+        seen.add(item.group);
+        const isHoekji = groupMembers[item.group] > 1;
+        const hNo = isHoekji ? hoekjiOrder.indexOf(item.group) + 1 : 0;
+        const { dong, rest } = shortParcelLabel(item.parcel || "");
+        const label = isHoekji
+          ? `<span class="lot-sb-badge" style="background:${hoekjiColor((hNo - 1) % 6)}">획지 ${hNo}</span>${groupMembers[item.group]}필지`
+          : `${escapeHtml(dong)} ${escapeHtml(rest)}`;
+        const sb = lotSetbacks[item.group] || {};
+        rows.push(
+          `<div class="lot-sb-row">`
+          + `<span class="lot-sb-name" title="${escapeHtml(item.parcel || "")}">${label}</span>`
+          + `<input type="number" min="0" step="0.1" class="js-lot-sb" data-group="${item.group}" data-kind="front" placeholder="전면" value="${sb.front != null ? sb.front : ""}">`
+          + `<span class="sep">/</span>`
+          + `<input type="number" min="0" step="0.1" class="js-lot-sb" data-group="${item.group}" data-kind="rear" placeholder="후면" value="${sb.rear != null ? sb.rear : ""}">`
+          + `</div>`
+        );
+      });
+      editor.innerHTML = rows.join("");
+      editor.querySelectorAll(".js-lot-sb").forEach((inp) => {
+        inp.addEventListener("input", (e) => {
+          const g = e.target.dataset.group;
+          const kind = e.target.dataset.kind;
+          const v = e.target.value.trim();
+          if (!lotSetbacks[g]) lotSetbacks[g] = {};
+          if (v === "") delete lotSetbacks[g][kind]; else lotSetbacks[g][kind] = Number(v);
+          if (lotSetbacks[g].front == null && lotSetbacks[g].rear == null) delete lotSetbacks[g];
+        });
+      });
+    }
+
+    const HOEKJI_COLORS = ["#1b4f9c", "#1f7a4d", "#b5651d", "#8e44ad", "#c0392b", "#16805a"];
+    function hoekjiColor(i) { return HOEKJI_COLORS[((i % 6) + 6) % 6]; }
 
     function toggleSelectAllParcels() {
       if (!pickedParcels.length) { status("선택된 필지가 없습니다."); return; }
@@ -1504,11 +1596,19 @@
           <td>${numberText(row.roadWidth, 2)}</td>
           <td>${numberText(row.frontage, 2)}</td>
           <td>${numberText(row.depth, 2)}</td>
-          <td>${numberText(row.avgHeight, 2)}</td>
+          <td${row.capExceeded ? ' style="color:#c0392b;font-weight:700"' : ""}>${numberText(row.avgHeight, 2)}</td>
+          <td>${escapeHtml(row.arterialClass || "-")}</td>
+          <td title="${row.heightCapBase != null ? "용도지역 기준 " + row.heightCapBase + "m, 위계조정 " + (row.centerAdjustPct >= 0 ? "+" : "") + row.centerAdjustPct + "%" : "해당 용도지역 상한 미정의"}">${capCellText(row)}</td>
           <td>${numberText(row.volume, 2)}</td>
           <td>${escapeHtml(row.confidence || "-")}</td>
         </tr>
       `).join("");
+    }
+
+    function capCellText(row) {
+      if (row.heightCapAdjusted == null) return "—";
+      const exceeded = row.capExceeded ? ' ⚠' : "";
+      return `${numberText(row.heightCapAdjusted, 1)} m${exceeded}`;
     }
 
     async function calculateBlockHeight() {
@@ -1561,6 +1661,9 @@
           slopeMultiplier: $("heightSlopeMultiplier").value.trim(),
           setbackFront: $("heightSetbackFront").value.trim(),
           setbackRear: $("heightSetbackRear").value.trim(),
+          lotSetbacks: lotSetbacks,
+          centerRank: $("centerRank").value,
+          centerAdjustPct: $("centerAdjustPct").value.trim(),
           reviewNote: $("heightReviewNote").value.trim()
         };
         const res = await fetch(`${bridgeBase}/api/analyze-selected-parcels`, {
@@ -1571,7 +1674,9 @@
         const json = await res.json();
         if (!json.ok) throw new Error(json.error || "선택필지 자동분석 실패");
         renderHeightResult(json);
-        status(`선택필지 자동분석 완료\n필지 수: ${json.totals.parcelCount}\n평균높이: ${numberText(json.totals.blockAverageHeight, 2)}m\n체적 합계: ${numberText(json.totals.volume, 1)}\n바닥면적 합계: ${numberText(json.totals.floorArea, 1)}\n\n조례/지구단위계획 확인값을 입력하면 그 건폐율이 우선 적용됩니다.`);
+        const exceed = json.totals.capExceededCount || 0;
+        const capLine = exceed ? `\n⚠ 최고높이 상한 초과 획지: ${exceed}개(표에서 빨간색 표시)` : "";
+        status(`선택필지 자동분석 완료\n필지 수: ${json.totals.parcelCount}\n평균높이: ${numberText(json.totals.blockAverageHeight, 2)}m\n체적 합계: ${numberText(json.totals.volume, 1)}\n바닥면적 합계: ${numberText(json.totals.floorArea, 1)}${capLine}\n\n조례/지구단위계획 확인값을 입력하면 그 건폐율이 우선 적용됩니다.`);
       } catch (error) {
         status(error.message);
       } finally {
@@ -1732,6 +1837,25 @@
     $("calculateBlockHeight").addEventListener("click", calculateBlockHeight);
     $("analyzeSelectedParcels").addEventListener("click", analyzeSelectedParcels);
     $("downloadHeightCsv").addEventListener("click", downloadHeightReport);
+    // 중심지 위계 선택 → 허용 조정범위 안내 + 입력값 클램프
+    const CENTER_RANK_MAX = { "광역중심": 30, "지역중심": 25, "지구중심": 20, "생활권중심": 15, "그 외": 10 };
+    function syncCenterRankHint() {
+      const rank = $("centerRank").value;
+      const hint = $("centerRankHint");
+      const pctEl = $("centerAdjustPct");
+      const mx = CENTER_RANK_MAX[rank];
+      if (rank === "도심·전략") {
+        hint.textContent = "도심·전략지역은 위계 조정범위를 별도 적용합니다(입력값 그대로 반영).";
+      } else if (mx != null) {
+        hint.textContent = `${rank}: 최고높이 ±${mx}% 범위 내에서 조정됩니다(범위 초과 입력은 자동 제한).`;
+        const v = Number(pctEl.value || 0);
+        if (v > mx) pctEl.value = mx; else if (v < -mx) pctEl.value = -mx;
+      } else {
+        hint.textContent = "용도지역×입지(간선/이면) 최고높이 상한에 위계 조정(±%)을 반영해 표시합니다. (도로폭 20m↑ 간선부 / 미만 이면부)";
+      }
+    }
+    $("centerRank").addEventListener("change", syncCenterRankHint);
+    $("centerAdjustPct").addEventListener("change", syncCenterRankHint);
     $("downloadCadastreDxf").addEventListener("click", downloadCadastreDxf);
     $("selectFolder").addEventListener("click", selectFolder);
     // 지도 필지 선택 UI는 두 카드에서 공유(.js-* 클래스)되며 동일하게 동작한다.

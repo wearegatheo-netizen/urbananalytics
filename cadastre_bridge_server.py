@@ -963,6 +963,41 @@ def merge_rings_to_lonlat(member_rings):
     return [[x / mlon, y / mlat] for (x, y) in ext]
 
 
+# ── 서울시 지구단위계획 높이계획: 용도지역별 입지(간선부/이면부) 최고높이 상한(m) ──
+#   접도조건은 도로폭 20m를 기준으로 간선부/이면부를 구분한다.
+def zone_height_cap_pair(zone_name):
+    """(간선부, 이면부) 최고높이(m) 튜플. 표에 없는 용도지역은 None."""
+    name = str(zone_name or "").replace(" ", "")
+    if "제3종일반주거" in name:
+        return (60.0, 40.0)
+    if "준주거" in name or "준공업" in name:
+        return (80.0, 50.0)
+    if "근린상업" in name:
+        return (90.0, 60.0)
+    if "일반상업" in name:
+        return (120.0, 70.0)
+    return None
+
+
+# 중심지 위계에 따른 최고높이 조정 가능 범위(±%). 도심·전략지역은 '별도 적용'.
+CENTER_RANK_RANGE = {
+    "광역중심": 30.0,
+    "지역중심": 25.0,
+    "지구중심": 20.0,
+    "생활권중심": 15.0,
+    "그 외": 10.0,
+}
+
+
+def clamp_center_pct(center_rank, requested_pct):
+    """위계별 허용 범위로 조정%를 제한. 도심/전략/미지정은 입력값 그대로 통과."""
+    rng = CENTER_RANK_RANGE.get(str(center_rank or "").strip())
+    pct = requested_pct if requested_pct is not None else 0.0
+    if rng is None:
+        return pct  # 도심·전략지역(별도 적용) 또는 위계 미지정
+    return max(-rng, min(rng, pct))
+
+
 def analyze_selected_parcels(payload):
     api_key = str(payload.get("apiKey") or "").strip()
     if not api_key:
@@ -977,14 +1012,20 @@ def analyze_selected_parcels(payload):
     # 수동 입력값(있으면 우선)
     manual_district = parse_float(payload.get("districtPlanCoverage"), None)
     manual_ordinance = parse_float(payload.get("ordinanceCoverage"), None)
-    manual_front = parse_float(payload.get("setbackFront"), parse_float(payload.get("setback"), None))  # 전면건축선후퇴(m)
-    manual_rear = parse_float(payload.get("setbackRear"), None)  # 후면건축선후퇴(m)
+    manual_front = parse_float(payload.get("setbackFront"), parse_float(payload.get("setback"), None))  # 전역 기본 전면건축선후퇴(m)
+    manual_rear = parse_float(payload.get("setbackRear"), None)  # 전역 기본 후면건축선후퇴(m)
+    # 획지(group)별 건축선후퇴: { "<group>": {"front": x, "rear": y} }
+    lot_setbacks = payload.get("lotSetbacks") or {}
+    # 중심지 위계 조정(①): 위계 + 조정%
+    center_rank = str(payload.get("centerRank") or "").strip()
+    center_pct = clamp_center_pct(center_rank, parse_float(payload.get("centerAdjustPct"), 0.0))
     rows = []
     total_floor_area = 0.0
     total_volume = 0.0
 
     # group 값으로 획지 묶음 구성(없으면 각 필지가 단독 획지). 첫 등장 순서 유지.
     grouped = []
+    group_keys = []
     index_of = {}
     for item in parcel_items:
         g = item.get("group")
@@ -992,9 +1033,11 @@ def analyze_selected_parcels(payload):
         if key not in index_of:
             index_of[key] = len(grouped)
             grouped.append([])
+            group_keys.append(g)
         grouped[index_of[key]].append(item)
 
-    for members in grouped:
+    for grp_idx, members in enumerate(grouped):
+        grp_key = group_keys[grp_idx]
         member_rings = []
         member_parcels = []
         member_area_sum = 0.0
@@ -1059,8 +1102,14 @@ def analyze_selected_parcels(payload):
         #  - 바닥면적은 대지면적 '전체'×건폐율(후퇴분을 면적에서 빼지 않음)
         raw_road = road_width
         road_width_used = max(raw_road, 4.0) if raw_road < 4.0 else raw_road
-        front_setback = manual_front if (manual_front is not None and manual_front > 0) else 0.0
-        rear_setback = manual_rear if (manual_rear is not None and manual_rear > 0) else 0.0
+        # 건축선후퇴: 획지(group)별 입력값 우선, 없으면 전역 기본값
+        lot_sb = lot_setbacks.get(str(grp_key)) or lot_setbacks.get(grp_key) or {}
+        lot_front = parse_float(lot_sb.get("front"), None)
+        lot_rear = parse_float(lot_sb.get("rear"), None)
+        eff_front = lot_front if lot_front is not None else manual_front
+        eff_rear = lot_rear if lot_rear is not None else manual_rear
+        front_setback = eff_front if (eff_front is not None and eff_front > 0) else 0.0
+        rear_setback = eff_rear if (eff_rear is not None and eff_rear > 0) else 0.0
         eff_depth = max(depth - rear_setback, 0.0)
         sine_base = road_width_used + front_setback
 
@@ -1069,6 +1118,19 @@ def analyze_selected_parcels(payload):
         max_height = slope_multiplier * (sine_base + eff_depth)
         avg_height = (min_height + max_height) / 2.0
         volume = floor_area * avg_height
+
+        # 입지(간선부/이면부) 구분 + 용도지역별 최고높이 상한(②) → 중심지 위계 조정(①)
+        is_arterial = road_width_used >= 20.0
+        arterial_class = "간선부" if is_arterial else "이면부"
+        cap_pair = zone_height_cap_pair(zone)
+        height_cap_base = (cap_pair[0] if is_arterial else cap_pair[1]) if cap_pair else None
+        if height_cap_base is not None:
+            height_cap_adjusted = round(height_cap_base * (1.0 + center_pct / 100.0), 2)
+            cap_exceeded = avg_height > height_cap_adjusted + 1e-6
+        else:
+            height_cap_adjusted = None
+            cap_exceeded = False
+
         if front_setback or rear_setback or road_width_used != raw_road:
             road_detail += (f" · 건축선후퇴 전면{round(front_setback, 2)}m"
                             + (f"·후면{round(rear_setback, 2)}m" if rear_setback else "")
@@ -1104,6 +1166,12 @@ def analyze_selected_parcels(payload):
                 "maxHeight": round(max_height, 3),
                 "avgHeight": round(avg_height, 3),
                 "volume": round(volume, 3),
+                "arterialClass": arterial_class,
+                "heightCapBase": height_cap_base,
+                "heightCapAdjusted": height_cap_adjusted,
+                "centerRank": center_rank or "-",
+                "centerAdjustPct": round(center_pct, 1),
+                "capExceeded": cap_exceeded,
                 "method": "획지 자동분석" if is_hoekji else "선택필지 자동분석",
                 "confidence": confidence,
                 "note": review_note,
@@ -1118,6 +1186,9 @@ def analyze_selected_parcels(payload):
             "floorArea": round(total_floor_area, 3),
             "volume": round(total_volume, 3),
             "blockAverageHeight": round(total_volume / total_floor_area, 3),
+            "capExceededCount": sum(1 for rrow in rows if rrow.get("capExceeded")),
+            "centerRank": center_rank or "-",
+            "centerAdjustPct": round(center_pct, 1),
         },
     }
 
@@ -1948,10 +2019,10 @@ def build_height_report_xlsx(payload):
     ws["A2"].font = legend_font
     legends = [
         "[산식] 바닥면적 = 대지면적 × 건폐율(%) ÷ 100",
-        "[산식] (도로사선) 최저높이 = 사선계수 × 도로폭,  최고높이 = 사선계수 × (도로폭 + 필지깊이)",
-        "[산식] 평균높이 = (최저높이 + 최고높이) ÷ 2",
-        "[산식] 체적 = 바닥면적 × 평균높이",
-        "[산식] 블록 평균높이 = Σ체적 ÷ Σ바닥면적",
+        "[산식] (1.5D 도로사선) 최저높이 = 사선계수 × (도로폭 + 전면건축선후퇴)",
+        "[산식] 최고높이 = 사선계수 × (도로폭 + 전면건축선후퇴 + (필지깊이 − 후면건축선후퇴))",
+        "[산식] 평균높이 = (최저높이 + 최고높이) ÷ 2,   체적 = 바닥면적 × 평균높이,   블록 평균높이 = Σ체적 ÷ Σ바닥면적",
+        "[입지] 도로폭 20m 이상=간선부, 미만=이면부.  [최고높이상한] 용도지역×입지 기준값을 중심지 위계(±%)로 조정한 값.",
         "※ 주황색 셀 = 입력/원천값,  파란색 셀 = Excel 수식(셀 클릭 시 산식 표시, 입력값을 바꾸면 자동 재계산).  '검산' 열은 숫자를 대입한 식입니다.",
     ]
     r = 4
@@ -1964,7 +2035,9 @@ def build_height_report_xlsx(payload):
         "필지", "대지면적(㎡)", "건폐율(%)", "바닥면적(㎡)", "도로폭(m)", "접도길이(m)",
         "필지깊이(m)", "사선계수", "최저높이(m)", "최고높이(m)", "평균높이(m)", "체적(㎥)",
         "산정방식", "건폐율출처", "신뢰도", "검산(산식·숫자 대입)", "비고",
+        "전면후퇴(m)", "후면후퇴(m)", "입지", "용도지역상한(m)", "위계조정후상한(m)", "상한판정",
     ]
+    ncols = len(headers)
     for c, text in enumerate(headers, 1):
         cell = ws.cell(row=header_row, column=c, value=text)
         cell.font = head_font
@@ -1973,8 +2046,11 @@ def build_height_report_xlsx(payload):
         cell.border = border
 
     first_data = header_row + 1
-    input_cols = {2, 3, 5, 6, 7, 8, 9, 10}
+    front_col = get_column_letter(18)
+    rear_col = get_column_letter(19)
+    input_cols = {2, 3, 5, 6, 7, 8, 9, 10, 18, 19}
     calc_cols = {4, 11, 12}
+    num_cols = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 19, 21, 22}
 
     for i, row in enumerate(rows):
         rr = first_data + i
@@ -1989,9 +2065,12 @@ def build_height_report_xlsx(payload):
         fl = parse_float(row.get("floorArea"))
         vol = parse_float(row.get("volume"))
         method = str(row.get("method") or "")
+        fsb = parse_float(row.get("frontSetback")) or 0.0
+        rsb = parse_float(row.get("rearSetback")) or 0.0
         roadsine = bool(
             rw and dp is not None and mn is not None and mx is not None
-            and abs(mn - slope * rw) < 0.06 and abs(mx - slope * (rw + dp)) < 0.06
+            and abs(mn - slope * (rw + fsb)) < 0.06
+            and abs(mx - slope * (rw + fsb + max(dp - rsb, 0.0))) < 0.06
         )
 
         ws.cell(row=rr, column=1, value=row.get("parcel") or f"{i + 1}")
@@ -2003,8 +2082,9 @@ def build_height_report_xlsx(payload):
         ws.cell(row=rr, column=7, value=dp)
         ws.cell(row=rr, column=8, value=(slope if roadsine else None))
         if roadsine:
-            ws.cell(row=rr, column=9, value=f"=H{rr}*E{rr}")
-            ws.cell(row=rr, column=10, value=f"=H{rr}*(E{rr}+G{rr})")
+            # 최저=계수×(도로폭+전면후퇴),  최고=계수×(도로폭+전면후퇴+(깊이−후면후퇴))
+            ws.cell(row=rr, column=9, value=f"=H{rr}*(E{rr}+{front_col}{rr})")
+            ws.cell(row=rr, column=10, value=f"=H{rr}*(E{rr}+{front_col}{rr}+MAX(G{rr}-{rear_col}{rr},0))")
         else:
             ws.cell(row=rr, column=9, value=mn)
             ws.cell(row=rr, column=10, value=mx)
@@ -2015,15 +2095,13 @@ def build_height_report_xlsx(payload):
         ws.cell(row=rr, column=15, value=row.get("confidence") or "")
 
         checks = []
-        fsb = parse_float(row.get("frontSetback"))
-        rsb = parse_float(row.get("rearSetback"))
-        if (fsb and fsb > 0) or (rsb and rsb > 0):
-            checks.append(f"건축선후퇴 전면{_fmt_num(fsb or 0)}/후면{_fmt_num(rsb or 0)}m(도로사선 기준거리=도로폭+전면후퇴)")
+        if fsb > 0 or rsb > 0:
+            checks.append(f"건축선후퇴 전면{_fmt_num(fsb)}/후면{_fmt_num(rsb)}m(기준거리=도로폭+전면후퇴, 깊이는 후면후퇴 차감)")
         if area is not None and cov is not None:
             checks.append(f"바닥면적={_fmt_num(area)}×{_fmt_num(cov)}%={_fmt_num(fl)}")
         if roadsine:
-            checks.append(f"최저={_fmt_num(slope)}×{_fmt_num(rw)}={_fmt_num(mn)}")
-            checks.append(f"최고={_fmt_num(slope)}×({_fmt_num(rw)}+{_fmt_num(dp)})={_fmt_num(mx)}")
+            checks.append(f"최저={_fmt_num(slope)}×({_fmt_num(rw)}+{_fmt_num(fsb)})={_fmt_num(mn)}")
+            checks.append(f"최고={_fmt_num(slope)}×({_fmt_num(rw)}+{_fmt_num(fsb)}+({_fmt_num(dp)}−{_fmt_num(rsb)}))={_fmt_num(mx)}")
         if mn is not None and mx is not None:
             checks.append(f"평균=({_fmt_num(mn)}+{_fmt_num(mx)})/2={_fmt_num(av)}")
         if fl is not None and av is not None:
@@ -2031,10 +2109,23 @@ def build_height_report_xlsx(payload):
         ws.cell(row=rr, column=16, value=" · ".join(checks))
         ws.cell(row=rr, column=17, value=row.get("note") or "")
 
-        for c in range(1, 18):
+        # 입지·최고높이 상한(②·①)
+        cap_base = parse_float(row.get("heightCapBase"))
+        cap_adj = parse_float(row.get("heightCapAdjusted"))
+        ws.cell(row=rr, column=18, value=fsb)
+        ws.cell(row=rr, column=19, value=rsb)
+        ws.cell(row=rr, column=20, value=row.get("arterialClass") or "-")
+        ws.cell(row=rr, column=21, value=cap_base)
+        ws.cell(row=rr, column=22, value=cap_adj)
+        if cap_adj is not None:
+            ws.cell(row=rr, column=23, value=("초과" if row.get("capExceeded") else "적합"))
+        else:
+            ws.cell(row=rr, column=23, value="대상外")
+
+        for c in range(1, ncols + 1):
             cell = ws.cell(row=rr, column=c)
             cell.border = border
-            if 2 <= c <= 12:
+            if c in num_cols:
                 cell.number_format = num_fmt
                 cell.alignment = right
             else:
@@ -2057,7 +2148,7 @@ def build_height_report_xlsx(payload):
             f"÷{_fmt_num(totals.get('floorArea'))}={_fmt_num(totals.get('blockAverageHeight'))}"
         ),
     )
-    for c in range(1, 18):
+    for c in range(1, ncols + 1):
         cell = ws.cell(row=tr, column=c)
         cell.border = border
         cell.fill = total_fill
@@ -2066,7 +2157,8 @@ def build_height_report_xlsx(payload):
             cell.font = bold
             cell.alignment = right
 
-    widths = [16, 12, 9, 12, 9, 11, 11, 9, 11, 11, 11, 12, 20, 12, 8, 46, 18]
+    widths = [16, 12, 9, 12, 9, 11, 11, 9, 11, 11, 11, 12, 20, 12, 8, 46, 18,
+              11, 11, 8, 14, 16, 9]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = ws.cell(row=first_data, column=1)
