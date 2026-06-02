@@ -757,32 +757,121 @@ def upis_road_width(lat, lon, api_key):
     return None
 
 
-def resolve_road_width(ring, projected, area, lat, lon, api_key, osm_info, fallback):
-    """지목도로·도시계획도로·OSM 세 방법을 모두 산정해 최적값을 채택."""
+def boundary_frontage(subject_segments, road_segments, threshold):
+    """subject 경계 세그먼트 중 road(세그먼트 집합)에 threshold(m) 이내로 접한 길이 합 + 최소거리."""
+    frontage = 0.0
+    min_dist = None
+    for p1, p2 in subject_segments:
+        near = False
+        for r1, r2 in road_segments:
+            d = segment_distance(p1, p2, r1, r2)
+            min_dist = d if min_dist is None else min(min_dist, d)
+            if d <= threshold:
+                near = True
+        if near:
+            frontage += segment_length(p1, p2)
+    return frontage, (min_dist if min_dist is not None else 1e9)
+
+
+def _wfs_features(typename, lat, lon, api_key, delta=0.0004, maxf=60):
+    params = {
+        "REQUEST": "GetFeature", "TYPENAME": typename, "VERSION": "1.1.0",
+        "MAXFEATURES": str(maxf), "SRSNAME": "EPSG:4326", "OUTPUT": "json",
+        "BBOX": f"{lon - delta},{lat - delta},{lon + delta},{lat + delta}",
+        "KEY": api_key, "DOMAIN": current_vworld_domain(),
+    }
+    try:
+        return http_get_json("https://api.vworld.kr/req/wfs", params).get("features") or []
+    except Exception:
+        return []
+
+
+def jimok_road_features(lat, lon, api_key):
+    feats = []
+    for typename in ("lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun"):
+        for f in _wfs_features(typename, lat, lon, api_key, 0.0004, 80):
+            if str((f.get("properties") or {}).get("jibun") or "").endswith("도"):
+                feats.append(f)
+    return feats
+
+
+def upis_road_features(lat, lon, api_key):
+    feats = []
+    for f in _wfs_features("lt_c_upisuq153", lat, lon, api_key, 0.0004, 40):
+        props = f.get("properties") or {}
+        names = f"{props.get('lcl_nam', '')}{props.get('mls_nam', '')}{props.get('dgm_nm', '')}"
+        if "도로" in names:
+            feats.append(f)
+    return feats
+
+
+def resolve_road_width(subject_ring, projected, area, lat, lon, api_key, fallback):
+    """획지/필지 경계에 '가장 많이 접한'(frontage 최대) 도로를 찾아 그 도로폭과 접도길이를 반환.
+       후보: 지목 도로(연속지적)·도시계획시설(UPIS)·OSM. 접도길이가 가장 큰 도로를 채택하고,
+       깊이는 그 접도길이로 산정한다."""
+    origin_lat = lat
+    subj_seg = polygon_segments([project_point(float(p[0]), float(p[1]), origin_lat)
+                                 for p in subject_ring if len(p) >= 2])
+
+    def ring_segments(road_ring):
+        return polygon_segments([project_point(float(p[0]), float(p[1]), origin_lat) for p in road_ring])
+
+    def best_ring(feature):
+        rings = [r for r in geometry_rings(feature.get("geometry") or {}) if len(r) >= 4]
+        return max(rings, key=lambda r: abs(projected_polygon_area(project_ring(r)))) if rings else None
+
     candidates = []
+
     try:
-        jimok = jimok_road_width(ring, lat, lon, api_key)
-        if jimok:
-            candidates.append(jimok)
+        for feature in jimok_road_features(lat, lon, api_key):
+            road_ring = best_ring(feature)
+            if not road_ring:
+                continue
+            width = estimate_polygon_width(road_ring)
+            front, dist = boundary_frontage(subj_seg, ring_segments(road_ring), 4.0)
+            if width and front > 0:
+                jibun = str((feature.get("properties") or {}).get("jibun") or "")
+                candidates.append({"width": round(width, 2), "name": f"지목도로({jibun})",
+                                   "source": "지목 도로", "frontage": round(front, 2), "dist": dist})
     except Exception:
         pass
+
     try:
-        upis = upis_road_width(lat, lon, api_key)
-        if upis:
-            candidates.append(upis)
+        for feature in upis_road_features(lat, lon, api_key):
+            road_ring = best_ring(feature)
+            if not road_ring:
+                continue
+            props = feature.get("properties") or {}
+            ar = parse_float(props.get("dgm_ar"))
+            ln = parse_float(props.get("dgm_lt"))
+            width = (ar / ln) if (ar and ln and ln > 0) else estimate_polygon_width(road_ring)
+            front, dist = boundary_frontage(subj_seg, ring_segments(road_ring), 5.0)
+            if width and front > 0:
+                grade = props.get("mls_nam") or props.get("dgm_nm") or "계획도로"
+                candidates.append({"width": round(width, 2), "name": f"도시계획도로({grade})",
+                                   "source": "도시계획시설", "frontage": round(front, 2), "dist": dist})
     except Exception:
         pass
-    if osm_info.get("roadWidth"):
-        candidates.append({"width": round(osm_info["roadWidth"], 2),
-                           "name": osm_info.get("roadName") or "OSM 도로", "source": "OSM"})
-    # 채택 우선순위: 지목 도로(실측) > 도시계획시설(계획) > OSM
-    priority = {"지목 도로": 0, "도시계획시설": 1, "OSM": 2}
-    candidates.sort(key=lambda c: priority.get(c["source"], 9))
+
+    try:
+        for road in osm_roads_near(lat, lon):
+            pts = [project_point(c[1], c[0], origin_lat) for c in road["coords"]]
+            seg = [(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
+            front, dist = boundary_frontage(subj_seg, seg, 12.0)
+            if road.get("width") and front > 0:
+                candidates.append({"width": round(road["width"], 2), "name": road.get("name") or "OSM 도로",
+                                   "source": "OSM", "frontage": round(front, 2), "dist": dist})
+    except Exception:
+        pass
+
     if candidates:
-        chosen = candidates[0]
-        detail = ", ".join(f"{c['source']}={c['width']}m" for c in candidates)
-        return chosen["width"], chosen["name"], chosen["source"], detail
-    return fallback, "접도 도로 자동판정 필요", "기본값", f"기본값={fallback}m"
+        prio = {"지목 도로": 0, "도시계획시설": 1, "OSM": 2}
+        # 접도길이 최대 → 동률이면 가까운 도로 → 출처 우선순위
+        candidates.sort(key=lambda c: (-c["frontage"], c["dist"], prio.get(c["source"], 9)))
+        best = candidates[0]
+        detail = " · ".join(f"{c['source']} {c['width']}m(접도{c['frontage']}m)" for c in candidates[:3])
+        return best["width"], best["name"], best["source"], detail, best["frontage"]
+    return fallback, "접도 도로 자동판정 필요", "기본값", f"기본값={fallback}m", round(math.sqrt(area), 2)
 
 
 def merge_rings_to_lonlat(member_rings):
@@ -902,13 +991,14 @@ def analyze_selected_parcels(payload):
         if not coverage:
             coverage, cov_source = 60.0, "확인 필요(기본 60% 가정)"
 
-        # 도로폭: 획지 외곽 기준 (지목도로 + 도시계획시설 + OSM)
-        osm_info = analyze_roads_for_ring(ring, projected, area)
-        road_width, road_name, road_source, road_detail = resolve_road_width(
-            ring, projected, area, c_lat, c_lon, api_key, osm_info, fallback_road_width
+        # 도로폭: 경계에 가장 많이 접한 도로 기준(지목도로/도시계획/OSM 중 frontage 최대)
+        road_width, road_name, road_source, road_detail, frontage = resolve_road_width(
+            ring, projected, area, c_lat, c_lon, api_key, fallback_road_width
         )
-        frontage = osm_info["frontage"] or math.sqrt(area)
-        depth = area / frontage if frontage else math.sqrt(area)
+        if not frontage:
+            frontage = math.sqrt(area)
+        # 깊이는 채택 도로의 접도길이 기준
+        depth = area / frontage
         coverage_ratio = coverage / 100.0 if coverage > 1 else coverage
         floor_area = area * coverage_ratio
         min_height = slope_multiplier * road_width
