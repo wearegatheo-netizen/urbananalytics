@@ -327,6 +327,38 @@
     .segmented input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
     .segmented.seg4 { grid-template-columns: repeat(4, 1fr); gap: 5px; }
     .segmented.seg4 label { gap: 3px; padding: 5px 2px; font-size: 12px; }
+    .segmented.seg2 { grid-template-columns: repeat(2, 1fr); }
+    .segmented.seg2 label { min-height: 40px; font-size: 13px; }
+
+    /* 카드 내부 접이식 설정 그룹 */
+    .mode-panel { margin-top: 2px; }
+    .subcard {
+      margin-top: 11px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: #fcfdfc;
+      overflow: hidden;
+    }
+    .subcard > summary {
+      list-style: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 9px 11px;
+      font-size: 12.5px; font-weight: 800; color: #2a3a30;
+      background: var(--soft); user-select: none;
+    }
+    .subcard > summary::-webkit-details-marker { display: none; }
+    .subcard > summary:hover { background: #eef3ee; }
+    .subcard[open] > summary { border-bottom: 1px solid var(--line); }
+    .subcard[open] > summary .chev { transform: rotate(180deg); }
+    .subcard-body { padding: 11px; }
+    .subcard-body > *:first-child { margin-top: 0; }
+    .muted-note { color: var(--muted); font-weight: 600; font-size: 11px; }
+    .opt-badge {
+      display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+      font-size: 10.5px; font-weight: 800; color: #fff; background: var(--accent);
+    }
+    .metric.warn { border-color: #f0c9c0; background: #fdf3f0; }
+    .metric.warn strong { color: var(--red-d); }
 
     .checkbox-row {
       display: flex;
@@ -461,7 +493,7 @@
 
     .result-summary {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
       gap: 7px;
       margin: 4px 0 9px;
     }
@@ -801,92 +833,123 @@
       <details class="card" id="cardHeight">
         <summary>블록별 평균높이 산정<span class="chev">▾</span></summary>
         <div class="card-body">
-          <p class="hint">엑셀/CSV 리스트로 산정하거나, 지도에서 필지를 클릭 선택해 자동 분석할 수 있습니다.</p>
+          <p class="hint">필지를 고르는 방법을 선택하세요. 건폐율·도로폭·필지깊이는 자동 산정되며, 아래 설정으로 덮어쓸 수 있습니다.</p>
 
-          <div class="field">
-            <label for="heightListFile">필지 지적 리스트(.xlsx/.csv/.txt)</label>
-            <input id="heightListFile" type="file" accept=".xlsx,.csv,.txt">
-          </div>
-          <p class="hint">건폐율은 용도지역 → 지구단위계획·조례(법제처)·시행령 상한 순으로, 도로폭은 지목 도로·도시계획시설·OSM에서 자동 산정됩니다. 아래 칸은 직접 확인값으로 덮어쓸 때만 입력하세요.</p>
-          <div class="height-grid">
-            <div class="field">
-              <label for="heightSlopeMultiplier">사선 계수</label>
-              <input id="heightSlopeMultiplier" type="number" min="0" step="0.1" value="1.5">
-            </div>
-            <div class="field">
-              <label for="heightFrontage">접도길이(m)</label>
-              <input id="heightFrontage" type="number" min="0" step="0.1" placeholder="자동">
-            </div>
-            <div class="field">
-              <label for="heightLotDepth">필지깊이(m)</label>
-              <input id="heightLotDepth" type="number" min="0" step="0.1" placeholder="자동">
-            </div>
-          </div>
-          <div class="grid-2">
-            <div class="field">
-              <label for="ordinanceCoverage">조례 건폐율(%)</label>
-              <input id="ordinanceCoverage" type="number" min="0" step="1" placeholder="자동(법제처/시행령)">
-            </div>
-            <div class="field">
-              <label for="districtPlanCoverage">지구단위 건폐율(%)</label>
-              <input id="districtPlanCoverage" type="number" min="0" step="1" placeholder="우선 적용">
-            </div>
-          </div>
-          <div class="grid-2">
-            <div class="field">
-              <label for="heightSetbackFront">전면 건축선후퇴(m)</label>
-              <input id="heightSetbackFront" type="number" min="0" step="0.1" placeholder="도로사선에 가산(지구단위 등)">
-            </div>
-            <div class="field">
-              <label for="heightSetbackRear">후면 건축선후퇴(m)</label>
-              <input id="heightSetbackRear" type="number" min="0" step="0.1" placeholder="획지깊이에서 차감">
-            </div>
-          </div>
-          <p class="hint">전면/후면 후퇴는 전역 기본값입니다. 획지별로 다르게 적용하려면 아래 ‘획지별 건축선후퇴’에서 개별 지정하세요.</p>
-          <div class="grid-2">
-            <div class="field">
-              <label for="centerRank">중심지 위계</label>
-              <select id="centerRank">
-                <option value="">미지정(상한만 표시)</option>
-                <option value="도심·전략">도심·전략지역(별도)</option>
-                <option value="광역중심">광역중심(±30%)</option>
-                <option value="지역중심">지역중심(±25%)</option>
-                <option value="지구중심">지구중심(±20%)</option>
-                <option value="생활권중심">생활권중심(±15%)</option>
-                <option value="그 외">그 외(±10%)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="centerAdjustPct">위계 조정(%)</label>
-              <input id="centerAdjustPct" type="number" step="1" value="0" placeholder="예: +20, -10">
-            </div>
-          </div>
-          <p class="hint" id="centerRankHint">용도지역×입지(간선/이면) 최고높이 상한에 위계 조정(±%)을 반영해 표시합니다. (도로폭 20m↑ 간선부 / 미만 이면부)</p>
-          <div class="field">
-            <label for="heightReviewNote">조례/결정도서 확인 메모</label>
-            <input id="heightReviewNote" placeholder="예: 서울시 조례 제00조, OO지구단위계획 결정도서 p.00">
+          <!-- 1단계: 분석 대상 선택 방법 -->
+          <div class="segmented seg2" id="heightModeToggle">
+            <label><input type="radio" name="heightMode" value="map" checked>🗺️ 지도에서 선택</label>
+            <label><input type="radio" name="heightMode" value="file">📄 리스트 파일</label>
           </div>
 
-          <div class="field pick-block">
-            <label class="checkbox-row"><input class="js-pickmode" type="checkbox">위치도에서 지번 클릭 선택</label>
-            <div class="pick-list-head">지도 선택 필지 <strong class="js-pick-count" id="heightPickCount">0</strong>개</div>
-            <div class="parcel-list js-parcel-list"></div>
-            <div class="pick-tools">
-              <button class="small-button ghost js-select-all" type="button">전체 선택</button>
-              <button class="small-button ghost js-group-parcels" type="button">선택 → 획지로 묶기</button>
-              <button class="small-button ghost js-ungroup-parcels" type="button">묶음 해제</button>
-              <button class="small-button js-clear-picks" type="button">전체 지우기</button>
+          <!-- 지도 선택 패널 -->
+          <div class="mode-panel" data-mode="map">
+            <div class="field pick-block">
+              <label class="checkbox-row"><input class="js-pickmode" type="checkbox">위치도에서 지번 클릭 선택</label>
+              <div class="pick-list-head">지도 선택 필지 <strong class="js-pick-count" id="heightPickCount">0</strong>개</div>
+              <div class="parcel-list js-parcel-list"></div>
+              <div class="pick-tools">
+                <button class="small-button ghost js-select-all" type="button">전체 선택</button>
+                <button class="small-button ghost js-group-parcels" type="button">선택 → 획지로 묶기</button>
+                <button class="small-button ghost js-ungroup-parcels" type="button">묶음 해제</button>
+                <button class="small-button js-clear-picks" type="button">전체 지우기</button>
+              </div>
+              <p class="hint">여러 필지를 체크한 뒤 ‘획지로 묶기’를 누르면, 합쳐진 경계 기준(면적 합·접도길이·깊이)으로 평균높이를 산정합니다.</p>
             </div>
-            <p class="hint">여러 필지를 체크한 뒤 ‘획지로 묶기’를 누르면, 합쳐진 경계 기준(면적 합·접도길이·깊이)으로 평균높이를 산정합니다.</p>
+            <div class="field" id="lotSetbackBlock" style="display:none">
+              <label>획지별 건축선후퇴(m) — 전면 / 후면</label>
+              <div id="lotSetbackEditor" class="lot-setback-editor"></div>
+              <p class="hint">비워두면 아래 설정의 전역 기본 후퇴값을 사용합니다.</p>
+            </div>
           </div>
-          <div class="field" id="lotSetbackBlock" style="display:none">
-            <label>획지별 건축선후퇴(m) — 전면 / 후면</label>
-            <div id="lotSetbackEditor" class="lot-setback-editor"></div>
-            <p class="hint">비워두면 위의 전역 기본 후퇴값을 사용합니다.</p>
+
+          <!-- 리스트 파일 패널 -->
+          <div class="mode-panel" data-mode="file" hidden>
+            <div class="field">
+              <label for="heightListFile">필지 지적 리스트(.xlsx/.csv/.txt)</label>
+              <input id="heightListFile" type="file" accept=".xlsx,.csv,.txt">
+            </div>
+            <div class="grid-2">
+              <div class="field">
+                <label for="heightFrontage">접도길이(m)</label>
+                <input id="heightFrontage" type="number" min="0" step="0.1" placeholder="자동">
+              </div>
+              <div class="field">
+                <label for="heightLotDepth">필지깊이(m)</label>
+                <input id="heightLotDepth" type="number" min="0" step="0.1" placeholder="자동">
+              </div>
+            </div>
+            <p class="hint">리스트에 좌표·주소가 있으면 접도길이·필지깊이는 자동 산정됩니다. 공통값으로 덮어쓸 때만 입력하세요.</p>
           </div>
-          <div class="actions">
-            <button id="calculateBlockHeight" type="button">파일 리스트 산정</button>
-            <button id="analyzeSelectedParcels" type="button">지도 선택필지 분석</button>
+
+          <!-- 고급 설정: 건폐율·건축선후퇴·사선계수 (접기) -->
+          <details class="subcard">
+            <summary><span>건폐율 · 건축선후퇴 · 사선계수 <span class="muted-note">자동값 덮어쓰기(선택)</span></span><span class="chev">▾</span></summary>
+            <div class="subcard-body">
+              <p class="hint">건폐율은 용도지역 → 지구단위계획·조례(법제처)·시행령 상한 순으로 자동 적용됩니다. 확인값으로 덮어쓸 때만 입력하세요.</p>
+              <div class="grid-2">
+                <div class="field">
+                  <label for="ordinanceCoverage">조례 건폐율(%)</label>
+                  <input id="ordinanceCoverage" type="number" min="0" step="1" placeholder="자동(법제처/시행령)">
+                </div>
+                <div class="field">
+                  <label for="districtPlanCoverage">지구단위 건폐율(%)</label>
+                  <input id="districtPlanCoverage" type="number" min="0" step="1" placeholder="우선 적용">
+                </div>
+              </div>
+              <div class="grid-2" style="margin-top:11px">
+                <div class="field">
+                  <label for="heightSetbackFront">전면 건축선후퇴(m)</label>
+                  <input id="heightSetbackFront" type="number" min="0" step="0.1" placeholder="도로사선에 가산">
+                </div>
+                <div class="field">
+                  <label for="heightSetbackRear">후면 건축선후퇴(m)</label>
+                  <input id="heightSetbackRear" type="number" min="0" step="0.1" placeholder="획지깊이에서 차감">
+                </div>
+              </div>
+              <p class="hint">전면/후면 후퇴는 전역 기본값입니다. 획지별로 다르게 적용하려면 지도 선택 목록의 ‘획지별 건축선후퇴’를 사용하세요.</p>
+              <div class="grid-2" style="margin-top:11px">
+                <div class="field">
+                  <label for="heightSlopeMultiplier">사선 계수(1.5D)</label>
+                  <input id="heightSlopeMultiplier" type="number" min="0" step="0.1" value="1.5">
+                </div>
+                <div class="field">
+                  <label for="heightReviewNote">조례/결정도서 메모</label>
+                  <input id="heightReviewNote" placeholder="예: OO지구단위계획 결정도서 p.00">
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- 최고높이 상한: 중심지 위계 조정 (접기) -->
+          <details class="subcard">
+            <summary><span>최고높이 상한 — 중심지 위계 조정 <span class="muted-note">선택</span></span><span class="chev">▾</span></summary>
+            <div class="subcard-body">
+              <div class="grid-2">
+                <div class="field">
+                  <label for="centerRank">중심지 위계</label>
+                  <select id="centerRank">
+                    <option value="">미지정(상한만 표시)</option>
+                    <option value="도심·전략">도심·전략지역(별도)</option>
+                    <option value="광역중심">광역중심(±30%)</option>
+                    <option value="지역중심">지역중심(±25%)</option>
+                    <option value="지구중심">지구중심(±20%)</option>
+                    <option value="생활권중심">생활권중심(±15%)</option>
+                    <option value="그 외">그 외(±10%)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="centerAdjustPct">위계 조정(%)</label>
+                  <input id="centerAdjustPct" type="number" step="1" value="0" placeholder="예: +20, -10">
+                </div>
+              </div>
+              <p class="hint" id="centerRankHint">용도지역×입지(간선/이면) 최고높이 상한에 위계 조정(±%)을 반영해 표시합니다. (도로폭 20m↑ 간선부 / 미만 이면부)</p>
+            </div>
+          </details>
+
+          <!-- 2단계: 산정 실행(모드별 단일 버튼) -->
+          <div class="actions" id="heightActions" style="grid-template-columns:1fr">
+            <button id="analyzeSelectedParcels" type="button" data-mode="map">지도 선택필지 분석</button>
+            <button id="calculateBlockHeight" type="button" data-mode="file" hidden>리스트 파일 산정</button>
           </div>
 
           <div id="heightResult" class="height-result">
@@ -894,6 +957,7 @@
         <div class="metric"><span>평균높이</span><strong id="blockAverageHeight">-</strong></div>
         <div class="metric"><span>체적 합계</span><strong id="blockTotalVolume">-</strong></div>
         <div class="metric"><span>바닥면적 합계</span><strong id="blockTotalFloorArea">-</strong></div>
+        <div class="metric warn" id="capExceedMetric" hidden><span>상한 초과</span><strong id="blockCapExceed">-</strong></div>
       </div>
       <div class="height-table-wrap">
         <table class="height-table">
@@ -1585,6 +1649,12 @@
       $("blockAverageHeight").textContent = `${numberText(json.totals.blockAverageHeight, 2)} m`;
       $("blockTotalVolume").textContent = `${numberText(json.totals.volume, 1)} ㎥`;
       $("blockTotalFloorArea").textContent = `${numberText(json.totals.floorArea, 1)} ㎡`;
+      const exceedN = json.totals.capExceededCount || 0;
+      const capMetric = $("capExceedMetric");
+      if (capMetric) {
+        capMetric.hidden = exceedN === 0;
+        $("blockCapExceed").textContent = `${exceedN} 개`;
+      }
       $("heightResultBody").innerHTML = lastHeightRows.map((row) => `
         <tr title="${escapeHtml(row.method || "")}">
           <td title="${escapeHtml(row.members || row.parcel || "")}">${escapeHtml(row.parcel || "")}</td>
@@ -1856,6 +1926,15 @@
     }
     $("centerRank").addEventListener("change", syncCenterRankHint);
     $("centerAdjustPct").addEventListener("change", syncCenterRankHint);
+    // 산정 방식 토글: 지도에서 선택 ↔ 리스트 파일
+    function setHeightMode(mode) {
+      document.querySelectorAll(".mode-panel[data-mode]").forEach((p) => { p.hidden = (p.dataset.mode !== mode); });
+      document.querySelectorAll('#heightActions button[data-mode]').forEach((b) => { b.hidden = (b.dataset.mode !== mode); });
+      if (mode === "file") setPickMode(false); // 파일 모드에서는 지도 클릭선택 해제(혼선 방지)
+    }
+    document.querySelectorAll('#heightModeToggle input[name="heightMode"]').forEach((r) => {
+      r.addEventListener("change", () => { if (r.checked) setHeightMode(r.value); });
+    });
     $("downloadCadastreDxf").addEventListener("click", downloadCadastreDxf);
     $("selectFolder").addEventListener("click", selectFolder);
     // 지도 필지 선택 UI는 두 카드에서 공유(.js-* 클래스)되며 동일하게 동작한다.
