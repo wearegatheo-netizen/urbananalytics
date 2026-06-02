@@ -646,6 +646,7 @@
 
         <div class="field">
           <label class="checkbox-row"><input id="showRadius" type="checkbox" checked>위치도 PNG에 반경 표시</label>
+          <label class="checkbox-row"><input id="showLabel" type="checkbox" checked>대상지 라벨 표시</label>
         </div>
 
         <div class="field">
@@ -825,6 +826,7 @@
             <div class="pick-list-head">지도 선택 필지 <strong class="js-pick-count" id="heightPickCount">0</strong>개</div>
             <div class="parcel-list js-parcel-list"></div>
             <div class="pick-tools">
+              <button class="small-button ghost js-select-all" type="button">전체 선택</button>
               <button class="small-button ghost js-group-parcels" type="button">선택 → 획지로 묶기</button>
               <button class="small-button ghost js-ungroup-parcels" type="button">묶음 해제</button>
               <button class="small-button js-clear-picks" type="button">전체 지우기</button>
@@ -1083,6 +1085,13 @@
       }).addTo(map);
     }
 
+    function updateLabelVisibility() {
+      const on = $("showLabel").checked;
+      if (!labelMarker) return;
+      if (on) { if (!map.hasLayer(labelMarker)) labelMarker.addTo(map); }
+      else { map.removeLayer(labelMarker); }
+    }
+
     function updateRadiusPreview() {
       const visible = $("showRadius").checked;
       circle.setStyle({
@@ -1138,6 +1147,16 @@
         ? `${pickedParcels.length}필지 · 획지 ${hoekjiCount}개 + 단독 ${soloCount}`
         : String(pickedParcels.length);
       document.querySelectorAll(".js-pick-count").forEach((el) => { el.textContent = summary; });
+      const allSel = pickedParcels.length > 0 && pickSelection.size === pickedParcels.length;
+      document.querySelectorAll(".js-select-all").forEach((b) => { b.textContent = allSel ? "전체 해제" : "전체 선택"; });
+    }
+
+    function toggleSelectAllParcels() {
+      if (!pickedParcels.length) { status("선택된 필지가 없습니다."); return; }
+      const allSelected = pickSelection.size === pickedParcels.length;
+      pickSelection.clear();
+      if (!allSelected) pickedParcels.forEach((_, i) => pickSelection.add(i));
+      renderParcelPickList();
     }
 
     function groupSelectedParcels() {
@@ -1281,6 +1300,7 @@
         iconAnchor: [0, 0]
       });
       labelMarker = L.marker(next, { icon: dynamicLabel, interactive: false }).addTo(map);
+      updateLabelVisibility();
       map.setView(next, 14);
     }
 
@@ -1729,12 +1749,14 @@
         renderParcelPickList(); // 두 목록의 체크 상태 동기화
       });
     });
+    document.querySelectorAll(".js-select-all").forEach((b) => b.addEventListener("click", toggleSelectAllParcels));
     document.querySelectorAll(".js-group-parcels").forEach((b) => b.addEventListener("click", groupSelectedParcels));
     document.querySelectorAll(".js-ungroup-parcels").forEach((b) => b.addEventListener("click", ungroupSelectedParcels));
     map.on("click", pickParcelFromMap);
     document.querySelectorAll(".mapType").forEach((input) => input.addEventListener("change", updateBaseMap));
     $("showCadastre").addEventListener("change", updateCadastreOverlay);
     $("showRadius").addEventListener("change", updateRadiusPreview);
+    $("showLabel").addEventListener("change", updateLabelVisibility);
     ["vworldId", "vworldPassword", "apiKey", "lawApiKey", "outDir"].forEach((id) => {
       const input = $(id);
       const saved = localStorage.getItem(`cadastre.${id}`);
@@ -1751,6 +1773,7 @@
 
     updateBaseMap();
     updateRadiusPreview();
+    updateLabelVisibility();
     renderParcelPickList();
     checkBridge(true);
   </script>
