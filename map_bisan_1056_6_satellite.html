@@ -916,6 +916,9 @@
     }
     map.createPane("cadastrePane");
     map.getPane("cadastrePane").style.zIndex = 420;
+    // 지적선(얇은 노란선)이 위성영상 위에서도 또렷하도록 어두운 외곽선(halo) 부여
+    map.getPane("cadastrePane").style.filter =
+      "drop-shadow(0 0 1px rgba(0,0,0,0.95)) drop-shadow(0 0 1px rgba(0,0,0,0.95))";
     map.createPane("selectedParcelPane");
     map.getPane("selectedParcelPane").style.zIndex = 620;
     let cadastreLayer = null;
@@ -1069,7 +1072,7 @@
         version: "1.3.0",
         key: apiKey,
         pane: "cadastrePane",
-        opacity: cadastreView ? 0.95 : 0.78,
+        opacity: cadastreView ? 1.0 : 0.95,
         attribution: "VWorld cadastral"
       };
       cadastreLayer = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
