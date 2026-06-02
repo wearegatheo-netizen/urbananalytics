@@ -968,6 +968,7 @@ def analyze_selected_parcels(payload):
     # 수동 입력값(있으면 우선)
     manual_district = parse_float(payload.get("districtPlanCoverage"), None)
     manual_ordinance = parse_float(payload.get("ordinanceCoverage"), None)
+    manual_setback = parse_float(payload.get("setback"), None)  # 건축선 후퇴(m) 직접 지정
     rows = []
     total_floor_area = 0.0
     total_volume = 0.0
@@ -1040,11 +1041,26 @@ def analyze_selected_parcels(payload):
         # 깊이는 채택 도로의 접도길이 기준
         depth = area / frontage
         coverage_ratio = coverage / 100.0 if coverage > 1 else coverage
-        floor_area = area * coverage_ratio
-        min_height = slope_multiplier * road_width
-        max_height = slope_multiplier * (road_width + depth)
+
+        # 건축선 반영:
+        #  - 소요너비 미달 도로(<4m)는 (4-도로폭)/2 양측 후퇴 + 도로폭 4m로 보정(건축법 §46①)
+        #  - 지구단위 건축한계선 등은 '건축선 후퇴(m)' 입력으로 직접 지정(있으면 우선)
+        #  - 후퇴면적(접도길이×후퇴거리)은 건폐 적용 대지에서 제외
+        raw_road = road_width
+        shortfall_setback = (4.0 - raw_road) / 2.0 if raw_road < 4.0 else 0.0
+        setback = manual_setback if (manual_setback is not None and manual_setback > 0) else shortfall_setback
+        road_width_used = max(raw_road, 4.0) if shortfall_setback > 0 else raw_road
+        setback_area = frontage * setback
+        effective_area = max(area - setback_area, 0.0)
+
+        floor_area = effective_area * coverage_ratio
+        min_height = slope_multiplier * road_width_used
+        max_height = slope_multiplier * (road_width_used + depth)
         avg_height = (min_height + max_height) / 2.0
         volume = floor_area * avg_height
+        if setback > 0:
+            road_detail += (f" · 건축선후퇴 {round(setback, 2)}m"
+                            f"(유효대지 {round(effective_area, 1)}㎡, 도로폭 {round(road_width_used, 1)}m 적용)")
         total_floor_area += floor_area
         total_volume += volume
         cov_ok = cov_source.startswith(("지구단위", "조례", "시행령"))
@@ -1059,12 +1075,16 @@ def analyze_selected_parcels(payload):
                 "members": ", ".join(member_parcels),
                 "isHoekji": is_hoekji,
                 "zone": zone or "-",
-                "area": round(area, 3),
+                "area": round(effective_area, 3),
+                "lotArea": round(area, 3),
+                "setback": round(setback, 3),
+                "setbackArea": round(setback_area, 3),
                 "coverageRatio": round(coverage_ratio * 100, 3),
                 "coverageSource": cov_source,
                 "floorArea": round(floor_area, 3),
                 "roadName": road_name,
-                "roadWidth": round(road_width, 3),
+                "roadWidth": round(road_width_used, 3),
+                "roadWidthRaw": round(raw_road, 3),
                 "roadSource": road_source,
                 "roadDetail": road_detail,
                 "frontage": round(frontage, 3),
@@ -1984,6 +2004,10 @@ def build_height_report_xlsx(payload):
         ws.cell(row=rr, column=15, value=row.get("confidence") or "")
 
         checks = []
+        setback_r = parse_float(row.get("setback"))
+        lot_area = parse_float(row.get("lotArea"))
+        if setback_r and setback_r > 0 and lot_area:
+            checks.append(f"건축선후퇴 {_fmt_num(setback_r)}m → 유효대지={_fmt_num(area)}(원{_fmt_num(lot_area)})")
         if area is not None and cov is not None:
             checks.append(f"바닥면적={_fmt_num(area)}×{_fmt_num(cov)}%={_fmt_num(fl)}")
         if roadsine:
