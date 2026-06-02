@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Logs
+*.log
+
+# Generated location maps & test renders (large, reproducible outputs)
+location_map_*.png
+test_*.png
+
+# Generated output folders
+extracted_images/
+rendered_report/
+rendered_template/
+test_outputs/
+dist/app/outputs/
+
+# Browser automation profile/downloads (may contain credentials/cookies) — never commit
+**/chrome_vworld_profile/
+**/browser_downloads/
+**/parcel_list_uploads/
+
+# Large data / archives
+source.pdf
+*.zip
+
+# Office lock files
+~$*
+
+# OS
+Thumbs.db
+.DS_Store

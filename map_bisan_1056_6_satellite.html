@@ -1,0 +1,1651 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>연속지적 위치도</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root {
+      --panel-bg: rgba(255, 255, 255, 0.98);
+      --ink: #14201a;
+      --muted: #64736b;
+      --line: #e6ebe7;
+      --line-strong: #cdd7d0;
+      --field-bg: #fff;
+      --field-bd: #c2cbc4;
+      --accent: #1b4f9c;
+      --accent-d: #163f7d;
+      --green: #1f7a4d;
+      --green-d: #185f3c;
+      --red: #e60012;
+      --red-d: #bf000f;
+      --gray: #5b5f66;
+      --gray-d: #4a4e54;
+      --soft: #f4f7f4;
+      --radius: 11px;
+      --radius-sm: 8px;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.32);
+      --ring: 0 0 0 3px rgba(27, 79, 156, 0.24);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body, #map {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      font-family: "Malgun Gothic", "Segoe UI", "Pretendard", system-ui, -apple-system, sans-serif;
+      background: #0e1411;
+      color: var(--ink);
+    }
+
+    .bridge-panel {
+      position: absolute;
+      z-index: 501;
+      top: 20px;
+      right: 20px;
+      width: 420px;
+      max-height: calc(100vh - 40px);
+      display: flex;
+      flex-direction: column;
+      background: var(--panel-bg);
+      border: 1px solid rgba(0, 0, 0, 0.10);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 13px 16px;
+      background: linear-gradient(180deg, #ffffff, #f3f6f3);
+      border-bottom: 1px solid var(--line);
+      flex: 0 0 auto;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 0;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: -0.2px;
+      color: #16271e;
+    }
+
+    .panel-title .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: 0 0 0 4px rgba(230, 0, 18, 0.18);
+    }
+
+    .panel-toggle {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: #fff;
+      color: #455;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .panel-toggle:hover { background: var(--soft); border-color: var(--accent); color: var(--accent); }
+
+    .panel-body {
+      padding: 14px 16px 16px;
+      overflow: auto;
+      flex: 1 1 auto;
+    }
+
+    .bridge-panel.collapsed { width: auto; }
+    .bridge-panel.collapsed .panel-body { display: none; }
+
+    .status {
+      margin: 0 0 13px;
+      padding: 11px 12px;
+      color: #143b27;
+      background: var(--soft);
+      border: 1px solid #d4e0d7;
+      border-left: 4px solid var(--green);
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      min-height: 48px;
+      max-height: 132px;
+      overflow: auto;
+    }
+
+    .card {
+      margin-bottom: 11px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .card.primary {
+      padding: 14px;
+      border-color: var(--line-strong);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+
+    details.card > summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      font-size: 13.5px;
+      font-weight: 800;
+      color: #1d2a23;
+      background: linear-gradient(180deg, #fbfdfb, #f4f7f4);
+      user-select: none;
+    }
+
+    details.card > summary::-webkit-details-marker { display: none; }
+    details.card > summary:hover { background: #eef3ee; }
+    details.card[open] > summary { border-bottom: 1px solid var(--line); }
+
+    .chev {
+      color: var(--muted);
+      font-size: 12px;
+      transition: transform 0.2s ease;
+    }
+
+    details.card[open] > summary .chev { transform: rotate(180deg); }
+
+    .card-body { padding: 14px; }
+
+    .field {
+      display: grid;
+      gap: 5px;
+      margin-bottom: 11px;
+    }
+    .field:last-child { margin-bottom: 0; }
+
+    .field label {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #3a463f;
+    }
+
+    .field input {
+      width: 100%;
+      padding: 9px 11px;
+      color: var(--ink);
+      background: var(--field-bg);
+      border: 1px solid var(--field-bd);
+      border-radius: var(--radius-sm);
+      font: inherit;
+      font-size: 14px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .field input::placeholder { color: #9aa69e; }
+    .field input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: var(--ring);
+    }
+    .field input[type="file"] {
+      padding: 7px 10px;
+      font-size: 12.5px;
+      background: var(--soft);
+    }
+
+    .input-wrap { position: relative; display: flex; }
+    .input-wrap input { padding-right: 40px; }
+    .reveal {
+      position: absolute;
+      top: 0; right: 0;
+      height: 100%;
+      width: 38px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      background: transparent;
+      color: #8b968e;
+      font-size: 15px;
+      cursor: pointer;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    .reveal:hover { color: var(--accent); }
+    .reveal.on { color: var(--accent); }
+
+    .folder-row {
+      display: grid;
+      grid-template-columns: 1fr 62px;
+      gap: 7px;
+    }
+
+    .folder-row button {
+      height: 38px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      color: #fff;
+      background: var(--gray);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .folder-row button:hover { background: var(--gray-d); }
+    .folder-row button:disabled { background: #9aa19a; cursor: wait; }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      margin: 13px 0 0;
+    }
+
+    .actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 40px;
+      padding: 4px 10px;
+      color: #fff;
+      background: var(--accent);
+      border: 0;
+      border-radius: var(--radius-sm);
+      font: inherit;
+      font-size: 13.5px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.05s;
+    }
+    .actions button:hover { background: var(--accent-d); }
+    .actions button:active { transform: translateY(1px); }
+    .actions button.download { background: var(--green); }
+    .actions button.download:hover { background: var(--green-d); }
+    .actions button.wide { grid-column: 1 / -1; background: var(--red); }
+    .actions button.wide:hover { background: var(--red-d); }
+    .actions button:disabled { background: #9aa19a; cursor: wait; }
+
+    .hint {
+      margin: 9px 0 0;
+      font-size: 11.5px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+    }
+
+    .segmented label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      min-height: 38px;
+      padding: 5px;
+      background: var(--soft);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      font-weight: 800;
+      color: #54635a;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .segmented label:hover { border-color: var(--accent); }
+    .segmented label:has(input:checked) {
+      background: #eaf1fb;
+      border-color: var(--accent);
+      color: var(--accent-d);
+      box-shadow: var(--ring);
+    }
+
+    .segmented input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+    .segmented.seg4 { grid-template-columns: repeat(4, 1fr); gap: 5px; }
+    .segmented.seg4 label { gap: 3px; padding: 5px 2px; font-size: 12px; }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 30px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #3a463f;
+      cursor: pointer;
+    }
+    .checkbox-row input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+
+    .parcel-list {
+      min-height: 36px;
+      max-height: 168px;
+      overflow: auto;
+      padding: 6px;
+      background: var(--soft);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      color: #2a3630;
+    }
+    .parcel-list .empty { padding: 7px 5px; color: var(--muted); }
+    .pick-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 6px;
+      border-radius: 6px;
+    }
+    .pick-item + .pick-item { margin-top: 3px; }
+    .pick-item:hover { background: #fff; }
+    .pick-item .num {
+      flex: 0 0 auto;
+      width: 19px;
+      height: 19px;
+      display: grid;
+      place-items: center;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .pick-item .jibun {
+      flex: 1 1 auto;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pick-item .jibun .dong { margin-right: 5px; color: var(--muted); font-weight: 600; }
+    .pick-item .rm {
+      flex: 0 0 auto;
+      width: 22px;
+      height: 22px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #9aa69e;
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .pick-item .rm:hover { background: #ffe5e5; color: var(--red); }
+
+    .small-button {
+      height: 34px;
+      padding: 3px 12px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      color: #fff;
+      background: var(--gray);
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .small-button:hover { background: var(--gray-d); }
+    .small-button:disabled { background: #9aa19a; cursor: wait; }
+
+    #calculateBlockHeight, #analyzeSelectedParcels { width: 100%; }
+
+    .height-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 9px;
+      margin-bottom: 11px;
+      align-items: end;
+    }
+
+    .result-summary {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+      margin: 4px 0 9px;
+    }
+
+    .metric {
+      padding: 9px 10px;
+      background: var(--soft);
+      border: 1px solid #d4e0d7;
+      border-radius: var(--radius-sm);
+    }
+    .metric span { display: block; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .metric strong { display: block; margin-top: 4px; color: #0f3b25; font-size: 15px; }
+
+    .height-result { display: none; margin-top: 10px; }
+
+    .height-table-wrap {
+      max-height: 190px;
+      overflow: auto;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      background: #fff;
+    }
+
+    .height-table { width: 100%; border-collapse: collapse; font-size: 11px; white-space: nowrap; }
+    .height-table th, .height-table td { padding: 6px 7px; border-bottom: 1px solid #eef1ee; text-align: right; }
+    .height-table th:first-child, .height-table td:first-child { text-align: left; }
+    .height-table tbody tr:nth-child(even) { background: #fafcfa; }
+    .height-table tbody tr:hover { background: #eef3ee; }
+    .height-table th { position: sticky; top: 0; z-index: 1; background: #eef3ee; color: #33433a; font-size: 11px; }
+    #downloadHeightCsv { margin-top: 9px; }
+
+    /* 대상지 라벨: 가변 폭 + 핀 위 중앙 정렬(아이콘 크기를 고정하지 않음) */
+    .pin-label-icon { width: auto !important; height: auto !important; }
+    .pin-label {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform: translate(-50%, calc(-100% - 22px));
+      min-width: 200px;
+      width: max-content;
+      padding: 10px 14px;
+      color: #111;
+      background: rgba(255, 255, 255, 0.7);
+      -webkit-backdrop-filter: blur(2.5px);
+      backdrop-filter: blur(2.5px);
+      border: 2px solid rgba(230, 0, 18, 0.9);
+      border-radius: 8px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+      font-size: 15px;
+      line-height: 1.35;
+      font-weight: 700;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .pin-label small { display: block; margin-top: 3px; color: #333; font-size: 12px; font-weight: 400; white-space: nowrap; }
+
+    .marker-dot {
+      width: 30px;
+      height: 30px;
+      background: #e60012;
+      border: 4px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 0 0 5px rgba(230, 0, 18, 0.32), 0 8px 22px rgba(0, 0, 0, 0.45);
+    }
+
+    .leaflet-control-attribution { font-size: 11px; }
+
+    /* PNG 미리보기 썸네일 */
+    .preview { margin-top: 13px; }
+    .preview img {
+      display: block;
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      background: #eef1ee;
+      cursor: zoom-in;
+    }
+    .preview.loading img { opacity: 0.45; }
+    .preview-hint { margin-top: 6px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+
+    /* 연속지적 진행 상태 표 */
+    .progress-wrap { margin-top: 12px; }
+    .progress-head { margin-bottom: 7px; font-size: 12.5px; color: #3a463f; }
+    .progress-head #cadastreStateLabel { font-weight: 800; color: var(--accent-d); }
+    .progress-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .progress-table th, .progress-table td { padding: 7px 8px; border-bottom: 1px solid #eef1ee; text-align: left; }
+    .progress-table th { background: #eef3ee; color: #33433a; font-size: 11.5px; }
+    .progress-table td:first-child { width: 26px; text-align: center; color: var(--muted); }
+    .progress-table td.st { width: 66px; text-align: center; font-weight: 800; white-space: nowrap; }
+    .progress-table tr:last-child td { border-bottom: 0; }
+    .progress-table tr.done td.st { color: var(--green); }
+    .progress-table tr.active td.st { color: var(--accent); }
+    .progress-table tr.active { background: #eaf1fb; }
+    .progress-table tr.wait td.st { color: #9aa69e; }
+    .progress-table tr.fail td.st { color: var(--red); }
+    .progress-out { margin-top: 6px; font-size: 11px; color: var(--muted); word-break: break-all; }
+    .rawlog { margin-top: 8px; }
+    .rawlog > summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--accent); }
+    .rawlog pre {
+      max-height: 150px;
+      overflow: auto;
+      margin: 7px 0 0;
+      padding: 9px;
+      background: #0f1714;
+      color: #d7e4dc;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* 2열 그리드 & 지도 선택 분석 */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      margin-bottom: 11px;
+      align-items: end;
+    }
+    .pick-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 9px;
+      margin: 0 0 11px;
+      padding: 9px 11px;
+      background: var(--soft);
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius-sm);
+      font-size: 12.5px;
+      color: #3a463f;
+    }
+    .pick-info strong { color: var(--accent-d); font-size: 14px; }
+    .pick-list-head { margin: 3px 0 5px; font-size: 12px; color: var(--muted); }
+    .pick-list-head strong { color: var(--accent-d); }
+    .small-button.ghost { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
+    .small-button.ghost:hover { background: #eaf1fb; }
+    .actions button, .small-button { white-space: nowrap; }
+    .field label { line-height: 1.3; }
+    /* 그리드 행 안의 칸은 하단 마진을 0으로 통일 → align-items:end로 입력칸 완벽 정렬
+       (행 간격은 .height-grid/.grid-2/.row 컨테이너의 margin/gap이 담당) */
+    .height-grid .field, .grid-2 .field, .row .field { margin-bottom: 0; }
+    .row { margin-bottom: 11px; }
+
+    /* custom scrollbars inside the panel */
+    .panel-body::-webkit-scrollbar,
+    .status::-webkit-scrollbar,
+    .parcel-list::-webkit-scrollbar,
+    .height-table-wrap::-webkit-scrollbar { width: 9px; height: 9px; }
+    .panel-body::-webkit-scrollbar-thumb,
+    .status::-webkit-scrollbar-thumb,
+    .parcel-list::-webkit-scrollbar-thumb,
+    .height-table-wrap::-webkit-scrollbar-thumb { background: #c6d0c8; border-radius: 6px; }
+    .panel-body::-webkit-scrollbar-thumb:hover { background: #aab6ac; }
+
+    @media (max-width: 900px) {
+      .bridge-panel {
+        top: 14px;
+        right: 14px;
+        left: 14px;
+        width: auto;
+        max-height: calc(100vh - 28px);
+      }
+      .bridge-panel.collapsed { left: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <section class="bridge-panel" id="bridgePanel">
+    <header class="panel-header">
+      <h1 class="panel-title"><span class="dot"></span>연속지적 위치도</h1>
+      <button class="panel-toggle" id="panelToggle" type="button" aria-label="패널 접기/펴기" title="패널 접기/펴기">▾</button>
+    </header>
+
+    <div class="panel-body" id="panelBody">
+      <div id="status" class="status">준비 중입니다...</div>
+
+      <div class="card primary">
+        <div class="field">
+          <label for="address">주소</label>
+          <input id="address" value="서울 송파구 중대로 113번지" autocomplete="off">
+        </div>
+
+        <div class="field">
+          <label for="mapRadius">위치도 반경(m)</label>
+          <input id="mapRadius" type="number" min="300" max="20000" step="100" value="1000">
+        </div>
+
+        <div class="field">
+          <label class="checkbox-row"><input id="showRadius" type="checkbox" checked>위치도 PNG에 반경 표시</label>
+        </div>
+
+        <div class="field">
+          <label>지도 종류</label>
+          <div class="segmented seg4">
+            <label><input class="mapType" type="radio" name="mapType" value="satellite" checked>위성</label>
+            <label><input class="mapType" type="radio" name="mapType" value="street">일반</label>
+            <label><input class="mapType" type="radio" name="mapType" value="blank">백지도</label>
+            <label><input class="mapType" type="radio" name="mapType" value="cadastre">지적도</label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>PNG 해상도</label>
+          <div class="segmented">
+            <label><input class="pngSize" type="radio" name="pngSize" value="standard">일반</label>
+            <label><input class="pngSize" type="radio" name="pngSize" value="high" checked>고화질</label>
+            <label><input class="pngSize" type="radio" name="pngSize" value="ultra">초고화질</label>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="showMap">위치도 보기</button>
+          <button id="downloadMap" class="download" type="button">PNG 다운로드</button>
+        </div>
+
+        <div id="previewBox" class="preview" style="display:none">
+          <img id="previewImg" alt="위치도 미리보기">
+          <div id="previewHint" class="preview-hint"></div>
+        </div>
+      </div>
+
+      <details class="card" id="cardAuth" open>
+        <summary>브이월드 인증<span class="chev">▾</span></summary>
+        <div class="card-body">
+          <div class="row">
+            <div class="field">
+              <label for="vworldId">브이월드 ID</label>
+              <input id="vworldId" autocomplete="username">
+            </div>
+            <div class="field">
+              <label for="vworldPassword">브이월드 PW</label>
+              <div class="input-wrap">
+                <input id="vworldPassword" type="password" autocomplete="current-password">
+                <button class="reveal" type="button" data-target="vworldPassword" aria-label="비밀번호 표시" title="표시/가리기">👁</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="apiKey">브이월드 API 키</label>
+            <div class="input-wrap">
+              <input id="apiKey" type="password" placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX">
+              <button class="reveal" type="button" data-target="apiKey" aria-label="API 키 표시" title="표시/가리기">👁</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="lawApiKey">법제처 OPEN API 키(OC) <span style="font-weight:400;color:#8a958d">— 조례 건폐율 자동조회용(선택)</span></label>
+            <div class="input-wrap">
+              <input id="lawApiKey" type="password" placeholder="open.law.go.kr 신청 OC값">
+              <button class="reveal" type="button" data-target="lawApiKey" aria-label="OC 키 표시" title="표시/가리기">👁</button>
+            </div>
+          </div>
+          <p class="hint">ID/PW/API 키는 이 PC 브라우저에만 저장됩니다(localStorage). 지적도 표시·지번 선택·연속지적 실행에 VWorld API 키가 필요합니다. 법제처 OC 키를 넣으면 조례 건폐율을 자동 조회하며, 없으면 용도지역별 시행령 상한을 적용합니다.</p>
+        </div>
+      </details>
+
+      <details class="card" id="cardCadastre">
+        <summary>연속지적 실행<span class="chev">▾</span></summary>
+        <div class="card-body">
+          <div class="row">
+            <div class="field">
+              <label for="radius">연속지적 반경(m)</label>
+              <input id="radius" type="number" min="100" step="100" value="1000">
+            </div>
+            <div class="field folder-field">
+              <label for="outDir">저장 폴더</label>
+              <div class="folder-row">
+                <input id="outDir" value="C:\Users\admin\OneDrive\Desktop\연속지적">
+                <button id="selectFolder" type="button">찾기</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="parcelListFile">선택 지번 엑셀(.xlsx/.csv/.txt)</label>
+            <input id="parcelListFile" type="file" accept=".xlsx,.csv,.txt">
+          </div>
+
+          <div class="field">
+            <label class="checkbox-row"><input id="showCadastre" type="checkbox">지적도 표시</label>
+          </div>
+          <div class="field pick-block">
+            <label class="checkbox-row"><input id="parcelPickMode" class="js-pickmode" type="checkbox">위치도에서 지번 클릭 선택</label>
+            <div class="pick-list-head">지도 선택 필지 <strong class="js-pick-count">0</strong>개</div>
+            <div id="parcelPickList" class="parcel-list js-parcel-list"></div>
+            <button id="clearParcelPicks" class="small-button js-clear-picks" type="button">선택 지번 지우기</button>
+          </div>
+
+          <div class="actions">
+            <button id="runCadastre" class="wide">연속지적 실행</button>
+          </div>
+
+          <div id="cadastreProgress" class="progress-wrap" style="display:none">
+            <div class="progress-head">진행 상태: <span id="cadastreStateLabel">대기</span></div>
+            <table class="progress-table">
+              <thead><tr><th>#</th><th>단계</th><th>상태</th></tr></thead>
+              <tbody id="cadastreProgressBody"></tbody>
+            </table>
+            <div class="progress-out" id="cadastreOutDir"></div>
+            <details class="rawlog">
+              <summary>원본 로그 보기</summary>
+              <pre id="cadastreLogRaw"></pre>
+            </details>
+          </div>
+        </div>
+      </details>
+
+      <details class="card" id="cardHeight">
+        <summary>블록별 평균높이 산정<span class="chev">▾</span></summary>
+        <div class="card-body">
+          <p class="hint">엑셀/CSV 리스트로 산정하거나, 지도에서 필지를 클릭 선택해 자동 분석할 수 있습니다.</p>
+
+          <div class="field">
+            <label for="heightListFile">필지 지적 리스트(.xlsx/.csv/.txt)</label>
+            <input id="heightListFile" type="file" accept=".xlsx,.csv,.txt">
+          </div>
+          <p class="hint">건폐율은 용도지역 → 지구단위계획·조례(법제처)·시행령 상한 순으로, 도로폭은 지목 도로·도시계획시설·OSM에서 자동 산정됩니다. 아래 칸은 직접 확인값으로 덮어쓸 때만 입력하세요.</p>
+          <div class="height-grid">
+            <div class="field">
+              <label for="heightSlopeMultiplier">사선 계수</label>
+              <input id="heightSlopeMultiplier" type="number" min="0" step="0.1" value="1.5">
+            </div>
+            <div class="field">
+              <label for="heightFrontage">접도길이(m)</label>
+              <input id="heightFrontage" type="number" min="0" step="0.1" placeholder="자동">
+            </div>
+            <div class="field">
+              <label for="heightLotDepth">필지깊이(m)</label>
+              <input id="heightLotDepth" type="number" min="0" step="0.1" placeholder="자동">
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label for="ordinanceCoverage">조례 건폐율(%)</label>
+              <input id="ordinanceCoverage" type="number" min="0" step="1" placeholder="자동(법제처/시행령)">
+            </div>
+            <div class="field">
+              <label for="districtPlanCoverage">지구단위 건폐율(%)</label>
+              <input id="districtPlanCoverage" type="number" min="0" step="1" placeholder="우선 적용">
+            </div>
+          </div>
+          <div class="field">
+            <label for="heightReviewNote">조례/결정도서 확인 메모</label>
+            <input id="heightReviewNote" placeholder="예: 서울시 조례 제00조, OO지구단위계획 결정도서 p.00">
+          </div>
+
+          <div class="field pick-block">
+            <label class="checkbox-row"><input class="js-pickmode" type="checkbox">위치도에서 지번 클릭 선택</label>
+            <div class="pick-list-head">지도 선택 필지 <strong class="js-pick-count" id="heightPickCount">0</strong>개</div>
+            <div class="parcel-list js-parcel-list"></div>
+            <button class="small-button js-clear-picks" type="button">선택 지번 지우기</button>
+          </div>
+          <div class="actions">
+            <button id="calculateBlockHeight" type="button">파일 리스트 산정</button>
+            <button id="analyzeSelectedParcels" type="button">지도 선택필지 분석</button>
+          </div>
+
+          <div id="heightResult" class="height-result">
+      <div class="result-summary">
+        <div class="metric"><span>평균높이</span><strong id="blockAverageHeight">-</strong></div>
+        <div class="metric"><span>체적 합계</span><strong id="blockTotalVolume">-</strong></div>
+        <div class="metric"><span>바닥면적 합계</span><strong id="blockTotalFloorArea">-</strong></div>
+      </div>
+      <div class="height-table-wrap">
+        <table class="height-table">
+          <thead>
+            <tr>
+              <th>필지</th>
+              <th>용도지역</th>
+              <th>대지면적</th>
+              <th>건폐율</th>
+              <th>바닥면적</th>
+              <th>접도 도로</th>
+              <th>도로폭</th>
+              <th>접도길이</th>
+              <th>필지깊이</th>
+              <th>평균높이</th>
+              <th>체적</th>
+              <th>신뢰도</th>
+            </tr>
+          </thead>
+          <tbody id="heightResultBody"></tbody>
+        </table>
+      </div>
+      <button id="downloadHeightCsv" class="small-button" type="button">엑셀 보고서 다운로드</button>
+          </div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const bridgeBase = "http://127.0.0.1:8788";
+    const target = [37.4939, 127.1198];
+    const $ = (id) => document.getElementById(id);
+    const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+    const map = L.map("map", {
+      center: target,
+      zoom: 15,
+      zoomControl: true,
+      attributionControl: true
+    });
+
+    const baseLayers = {
+      satellite: L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 20,
+        attribution: "Tiles &copy; Esri"
+      }),
+      street: L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png", {
+        maxZoom: 20,
+        attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
+      }),
+      blank: L.tileLayer("https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png", {
+        maxZoom: 20,
+        attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
+      })
+    };
+    let activeBaseLayer = baseLayers.satellite.addTo(map);
+
+    // 위성 베이스: VWorld API 키가 있으면 VWorld 위성영상을 사용한다.
+    // 연속지적도와 동일한 국가 좌표계 기준이라 지적선이 영상과 정합한다.
+    // 키가 없으면 Esri 위성영상으로 대체하지만, 한국 지적과 수 m 오차가 생길 수 있다.
+    function satelliteBaseLayer() {
+      const key = $("apiKey").value.trim();
+      if (key) {
+        return L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${key}/Satellite/{z}/{y}/{x}.jpeg`, {
+          maxZoom: 19,
+          attribution: "VWorld 위성영상"
+        });
+      }
+      return baseLayers.satellite;
+    }
+    map.createPane("cadastrePane");
+    map.getPane("cadastrePane").style.zIndex = 420;
+    map.createPane("selectedParcelPane");
+    map.getPane("selectedParcelPane").style.zIndex = 620;
+    let cadastreLayer = null;
+    const selectedParcelLayer = L.layerGroup([], { pane: "selectedParcelPane" }).addTo(map);
+
+    const dotIcon = L.divIcon({
+      className: "",
+      html: "<div class='marker-dot'></div>",
+      iconSize: [38, 38],
+      iconAnchor: [19, 19]
+    });
+
+    const labelIcon = L.divIcon({
+      className: "pin-label-icon",
+      html: "<div class='pin-label'>서울 송파구 중대로 113번지<small>서울특별시 송파구 가락동 79-2</small></div>",
+      iconSize: null,
+      iconAnchor: [0, 0]
+    });
+
+    let dotMarker = L.marker(target, { icon: dotIcon, interactive: false }).addTo(map);
+    let labelMarker = L.marker(target, { icon: labelIcon, interactive: false }).addTo(map);
+    let circle = L.circle(target, {
+      radius: 1000,
+      color: "#e60012",
+      weight: 2,
+      opacity: 0.9,
+      fillColor: "#e60012",
+      fillOpacity: 0.04
+    }).addTo(map);
+    const pickedParcels = [];
+    const pickedParcelKeys = new Set();
+    const parcelPickMarkers = [];
+    let lastHeightRows = [];
+    let lastHeightTotals = null;
+
+    function status(text) {
+      $("status").textContent = text;
+      $("status").scrollTop = 0;
+      const panel = $("status").closest(".bridge-panel");
+      if (panel) panel.scrollTop = 0;
+    }
+
+    function setBusy(button, busy, busyText) {
+      if (!button.dataset.label) button.dataset.label = button.textContent;
+      button.disabled = busy;
+      button.textContent = busy ? busyText : button.dataset.label;
+    }
+
+    async function checkBridge(showReady = false) {
+      try {
+        const res = await fetch(`${bridgeBase}/api/health`, { cache: "no-store" });
+        const json = await res.json();
+        if (!json.ok) throw new Error("브릿지 응답 오류");
+        if (showReady) status("준비 완료\n주소와 위치도 반경을 확인한 뒤 '위치도 보기'를 누르세요.");
+        return true;
+      } catch (error) {
+        status("브릿지 서버가 실행 중이 아닙니다.\n\n바탕화면의 '연속지적 위치도' 아이콘으로 다시 실행해 주세요.\n직접 HTML 파일(file://)을 열면 버튼이 작동하지 않습니다.");
+        return false;
+      }
+    }
+
+    function values() {
+      return {
+        address: $("address").value.trim(),
+        mapRadius: Number($("mapRadius").value.trim() || 3000),
+        showRadius: $("showRadius").checked,
+        mapType: document.querySelector(".mapType:checked").value,
+        pngSize: document.querySelector(".pngSize:checked").value,
+        apiKey: $("apiKey").value.trim(),
+        radius: $("radius").value.trim(),
+        outDir: $("outDir").value.trim(),
+        vworldId: $("vworldId").value.trim(),
+        vworldPassword: $("vworldPassword").value
+      };
+    }
+
+    function requireInputs(options = {}) {
+      const data = values();
+      if (!data.address) throw new Error("주소를 입력해주세요.");
+      if (!Number.isFinite(data.mapRadius) || data.mapRadius < 300 || data.mapRadius > 20000) {
+        throw new Error("위치도 반경은 300~20000m 범위의 숫자로 입력해주세요.");
+      }
+      if (options.requireApiKey && !data.apiKey) {
+        throw new Error("연속지적 실행에는 브이월드 API 키가 필요합니다.");
+      }
+      if (options.requireVWorldLogin && (!data.vworldId || !data.vworldPassword)) {
+        throw new Error("자동 로그인을 위해 브이월드 ID와 PW를 입력해주세요.");
+      }
+      return data;
+    }
+
+    function serverMapType(mapType) {
+      // 서버 PNG는 지적선을 그리지 않으므로 '지적도' 보기는 백지도로 출력
+      return mapType === "cadastre" ? "blank" : mapType;
+    }
+
+    function mapUrl(data) {
+      const params = new URLSearchParams({
+        address: data.address,
+        apiKey: data.apiKey,
+        radius: String(data.mapRadius),
+        showRadius: data.showRadius ? "1" : "0",
+        mapType: serverMapType(data.mapType),
+        size: data.pngSize,
+        facilities: "0"
+      });
+      return `${bridgeBase}/api/satellite-map?${params.toString()}`;
+    }
+
+    function updateBaseMap() {
+      const mapType = document.querySelector(".mapType:checked").value;
+      const cadastreView = mapType === "cadastre";
+      if (activeBaseLayer) {
+        map.removeLayer(activeBaseLayer);
+        activeBaseLayer = null;
+      }
+      map.getContainer().classList.toggle("blank-map", mapType === "blank" || cadastreView);
+      const layer = mapType === "satellite" ? satelliteBaseLayer()
+        : cadastreView ? baseLayers.blank
+        : baseLayers[mapType];
+      activeBaseLayer = layer.addTo(map);
+      // 지적도 보기: 깔끔한 백지도 위에 지적선만 진하게 표시
+      if (cadastreView && $("apiKey").value.trim()) {
+        $("showCadastre").checked = true;
+      } else if (cadastreView) {
+        status("지적도 보기에는 VWorld API 키가 필요합니다.");
+      }
+      if ($("showCadastre").checked) updateCadastreOverlay();
+      else if (cadastreLayer) cadastreLayer.bringToFront();
+    }
+
+    function updateCadastreOverlay() {
+      const checkbox = $("showCadastre");
+      if (cadastreLayer) {
+        map.removeLayer(cadastreLayer);
+        cadastreLayer = null;
+      }
+      if (!checkbox.checked) return;
+      const apiKey = $("apiKey").value.trim();
+      if (!apiKey) {
+        checkbox.checked = false;
+        status("지적도를 표시하려면 VWorld API 키가 필요합니다.");
+        return;
+      }
+      const cadastreView = document.querySelector(".mapType:checked").value === "cadastre";
+      const commonOptions = {
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0",
+        key: apiKey,
+        pane: "cadastrePane",
+        opacity: cadastreView ? 0.95 : 0.78,
+        attribution: "VWorld cadastral"
+      };
+      cadastreLayer = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
+        ...commonOptions,
+        layers: "lp_pa_cbnd_bonbun,lp_pa_cbnd_bubun",
+        styles: "lp_pa_cbnd_bonbun_line,lp_pa_cbnd_bubun_line"
+      }).addTo(map);
+    }
+
+    function updateRadiusPreview() {
+      const visible = $("showRadius").checked;
+      circle.setStyle({
+        opacity: visible ? 0.9 : 0,
+        fillOpacity: visible ? 0.04 : 0
+      });
+    }
+
+    function parcelKey(text) {
+      const matches = String(text || "").match(/\d{1,5}(?:\s*-\s*\d{1,5})?/g);
+      return matches && matches.length ? matches[matches.length - 1].replace(/\s+/g, "") : "";
+    }
+
+    function shortParcelLabel(full) {
+      const tokens = String(full || "").trim().split(/\s+/).filter(Boolean);
+      let start = tokens.findIndex((t) => /(동|리|가)$/.test(t));
+      if (start < 0) start = Math.max(0, tokens.length - 2);
+      const dong = tokens[start] || "";
+      const rest = tokens.slice(start + 1).join(" ") || (tokens[tokens.length - 1] || String(full || ""));
+      return { dong, rest };
+    }
+
+    function renderParcelPickList() {
+      // 두 카드(연속지적 실행 · 블록 평균높이)에 동일한 선택 목록을 동기화한다.
+      const html = pickedParcels.length
+        ? pickedParcels.map((item, idx) => {
+            const full = item.parcel || "";
+            const { dong, rest } = shortParcelLabel(full);
+            return `<div class="pick-item" title="${escapeHtml(full)}">`
+              + `<span class="num">${idx + 1}</span>`
+              + `<span class="jibun"><span class="dong">${escapeHtml(dong)}</span>${escapeHtml(rest)}</span>`
+              + `<button class="rm" type="button" data-idx="${idx}" title="삭제" aria-label="${escapeHtml(full)} 삭제">&times;</button>`
+              + `</div>`;
+          }).join("")
+        : '<div class="empty">선택된 지번 없음</div>';
+      document.querySelectorAll(".js-parcel-list").forEach((el) => { el.innerHTML = html; });
+      document.querySelectorAll(".js-pick-count").forEach((el) => { el.textContent = String(pickedParcels.length); });
+    }
+
+    function removeParcelPick(idx) {
+      const item = pickedParcels[idx];
+      if (!item) return;
+      pickedParcels.splice(idx, 1);
+      pickedParcelKeys.delete(parcelKey(item.parcel));
+      if (item.layer) {
+        try { selectedParcelLayer.removeLayer(item.layer); } catch (_) {}
+        try { item.layer.remove(); } catch (_) {}
+      }
+      renderParcelPickList();
+      status(pickedParcels.length
+        ? `선택 지번에서 제거했습니다.\n현재 ${pickedParcels.length}개 선택됨`
+        : "선택된 지번이 없습니다.");
+    }
+
+    function clearParcelPicks() {
+      pickedParcels.length = 0;
+      pickedParcelKeys.clear();
+      while (parcelPickMarkers.length) {
+        parcelPickMarkers.pop().remove();
+      }
+      selectedParcelLayer.clearLayers();
+      renderParcelPickList();
+    }
+
+    async function highlightSelectedParcel(latlng, apiKey) {
+      const params = new URLSearchParams({
+        lat: String(latlng.lat),
+        lon: String(latlng.lng),
+        apiKey
+      });
+      const res = await fetch(`${bridgeBase}/api/parcel-feature?${params.toString()}`);
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error || "지적도 도형 조회 실패");
+      const featureLayer = L.geoJSON(json.feature, {
+        pane: "selectedParcelPane",
+        style: {
+          color: "#ff2a00",
+          weight: 3,
+          opacity: 1,
+          fillColor: "#ff2a00",
+          fillOpacity: 0.24
+        },
+        interactive: false
+      }).addTo(selectedParcelLayer);
+      return featureLayer;
+    }
+
+    async function pickParcelFromMap(event) {
+      if (!document.querySelector(".js-pickmode:checked")) return;
+      try {
+        const data = values();
+        if (!data.apiKey) throw new Error("지도에서 지번을 선택하려면 VWorld API 키가 필요합니다.");
+        if (!(await checkBridge())) return;
+        status("선택한 위치의 지번을 확인하는 중입니다...");
+        const params = new URLSearchParams({
+          lat: String(event.latlng.lat),
+          lon: String(event.latlng.lng),
+          apiKey: data.apiKey
+        });
+        const res = await fetch(`${bridgeBase}/api/reverse-parcel?${params.toString()}`);
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "지번 조회 실패");
+        const key = parcelKey(json.parcel);
+        if (!key) throw new Error("선택한 위치의 지번 번호를 읽지 못했습니다.");
+        if (!pickedParcelKeys.has(key)) {
+          pickedParcelKeys.add(key);
+          const picked = { parcel: json.parcel, lat: event.latlng.lat, lon: event.latlng.lng, layer: null };
+          pickedParcels.push(picked);
+          try {
+            picked.layer = await highlightSelectedParcel(event.latlng, data.apiKey);
+          } catch (_) {
+            const marker = L.circleMarker(event.latlng, {
+              radius: 7,
+              color: "#ffffff",
+              weight: 2,
+              fillColor: "#ff2a00",
+              fillOpacity: 0.95,
+              interactive: false
+            }).addTo(map);
+            parcelPickMarkers.push(marker);
+            picked.layer = marker;
+          }
+        }
+        renderParcelPickList();
+        status(`선택 지번 추가\n${json.parcel}\n현재 ${pickedParcels.length}개 선택됨`);
+      } catch (error) {
+        status(error.message);
+      }
+    }
+
+    function updateMarkers(lat, lon, address, refined, radius) {
+      const next = [lat, lon];
+      dotMarker.setLatLng(next);
+      labelMarker.remove();
+      circle.setLatLng(next);
+      circle.setRadius(radius);
+      updateRadiusPreview();
+      const dynamicLabel = L.divIcon({
+        className: "pin-label-icon",
+        html: `<div class='pin-label'>${address}<small>${refined}</small></div>`,
+        iconSize: null,
+        iconAnchor: [0, 0]
+      });
+      labelMarker = L.marker(next, { icon: dynamicLabel, interactive: false }).addTo(map);
+      map.setView(next, 14);
+    }
+
+    async function showMap() {
+      const button = $("showMap");
+      try {
+        const data = requireInputs();
+        if (!(await checkBridge())) return;
+        setBusy(button, true, "확인 중...");
+        status("주소를 좌표로 변환하는 중입니다...");
+        const params = new URLSearchParams({ address: data.address, apiKey: data.apiKey });
+        const res = await fetch(`${bridgeBase}/api/geocode?${params.toString()}`);
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "주소 변환 실패");
+        updateMarkers(json.lat, json.lon, data.address, json.refined, data.mapRadius);
+        renderPreview(data);
+        const keyNote = data.apiKey ? "VWorld API 키 사용" : "API 키 없이 기본 주소 변환 사용";
+        const mapTypeName = { satellite: "위성지도", street: "일반지도", blank: "백지도", cadastre: "지적도(백지도+지적선)" }[data.mapType];
+        const sizeName = { standard: "일반", high: "고화질", ultra: "초고화질" }[data.pngSize];
+        status(`위치도 준비 완료\n${keyNote}\n지도 종류: ${mapTypeName}\nPNG 해상도: ${sizeName}\n위치도 반경: ${data.mapRadius}m\n좌표: ${json.lat.toFixed(7)}, ${json.lon.toFixed(7)}\n정제 주소: ${json.refined}`);
+      } catch (error) {
+        status(error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    }
+
+    let lastPreviewUrl = null;
+    function showPreviewBlob(blob, hint) {
+      const box = $("previewBox");
+      const img = $("previewImg");
+      if (!box || !img) return;
+      if (lastPreviewUrl) URL.revokeObjectURL(lastPreviewUrl);
+      lastPreviewUrl = URL.createObjectURL(blob);
+      img.src = lastPreviewUrl;
+      img.onclick = () => window.open(lastPreviewUrl, "_blank");
+      $("previewHint").textContent = hint;
+      box.style.display = "block";
+    }
+
+    async function renderPreview(data) {
+      const box = $("previewBox");
+      if (!box) return;
+      try {
+        box.style.display = "block";
+        box.classList.add("loading");
+        $("previewHint").textContent = "미리보기 생성 중...";
+        const params = new URLSearchParams({
+          address: data.address,
+          apiKey: data.apiKey,
+          radius: String(data.mapRadius),
+          showRadius: data.showRadius ? "1" : "0",
+          mapType: serverMapType(data.mapType),
+          size: "standard",
+          facilities: "0"
+        });
+        const res = await fetch(`${bridgeBase}/api/satellite-map?${params.toString()}`);
+        if (!res.ok) throw new Error("preview fail");
+        const blob = await res.blob();
+        showPreviewBlob(blob, "미리보기(일반 해상도) · 클릭 시 원본 열기 · 다운로드는 선택한 해상도로 저장됩니다.");
+      } catch (error) {
+        $("previewHint").textContent = "미리보기를 불러오지 못했습니다.";
+      } finally {
+        box.classList.remove("loading");
+      }
+    }
+
+    const CADASTRE_STEPS = [
+      "주소→좌표 변환 및 연속지적 ZIP 탐색",
+      "연속지적 ZIP 다운로드",
+      "용도지역 ZIP 4종 다운로드",
+      "QGIS에서 반경 내 필지·용도지역 선택",
+      "CAD 경계선 변환 및 지번·용도지역 라벨 작성",
+      "DXF·QGIS 프로젝트 저장"
+    ];
+
+    function renderCadastreProgress(job) {
+      const wrap = $("cadastreProgress");
+      if (!wrap) return;
+      wrap.style.display = "block";
+      const log = job.log || "";
+      let current = -1;
+      CADASTRE_STEPS.forEach((_, i) => {
+        if (log.includes(`[${i + 1}/6]`)) current = i;
+      });
+      const finished = !job.running;
+      const succeeded = finished && (job.exitCode === 0 || /완료되었습니다/.test(log));
+      const rows = CADASTRE_STEPS.map((label, i) => {
+        let state, cls;
+        if (succeeded || i < current) {
+          state = "완료"; cls = "done";
+        } else if (i === current) {
+          if (!finished) { state = "진행 중"; cls = "active"; }
+          else if (succeeded) { state = "완료"; cls = "done"; }
+          else { state = "중단"; cls = "fail"; }
+        } else {
+          state = finished && !succeeded ? "미실행" : "대기"; cls = "wait";
+        }
+        return `<tr class="${cls}"><td>${i + 1}</td><td>${label}</td><td class="st">${state}</td></tr>`;
+      }).join("");
+      $("cadastreProgressBody").innerHTML = rows;
+      $("cadastreStateLabel").textContent = job.running ? "실행 중" : (succeeded ? "완료" : "종료");
+      $("cadastreOutDir").textContent = job.outDir ? `결과 폴더: ${job.outDir}` : "";
+      $("cadastreLogRaw").textContent = log || "(아직 로그 없음)";
+    }
+
+    async function downloadPng() {
+      const button = $("downloadMap");
+      try {
+        const data = requireInputs();
+        if (!(await checkBridge())) return;
+        setBusy(button, true, "생성 중...");
+        status("PNG 생성 중입니다. 고화질/초고화질은 시간이 걸릴 수 있습니다...");
+        const res = await fetch(mapUrl(data));
+        if (!res.ok) throw new Error("PNG 생성 실패");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `location_map_${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showPreviewBlob(blob, "다운로드한 위치도 미리보기 · 클릭 시 원본 열기");
+        status("PNG 다운로드를 시작했습니다.");
+      } catch (error) {
+        status(error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    }
+
+    function readParcelListFile() {
+      const input = $("parcelListFile");
+      const file = input && input.files && input.files[0];
+      if (!file) return Promise.resolve(null);
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || "");
+          resolve({
+            name: file.name,
+            data: result.includes(",") ? result.split(",", 2)[1] : result
+          });
+        };
+        reader.onerror = () => reject(new Error("지번 리스트 파일을 읽지 못했습니다."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function readHeightListFile() {
+      const input = $("heightListFile");
+      const file = input && input.files && input.files[0];
+      if (!file) return Promise.resolve(null);
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || "");
+          resolve({
+            name: file.name,
+            data: result.includes(",") ? result.split(",", 2)[1] : result
+          });
+        };
+        reader.onerror = () => reject(new Error("필지 지적 리스트 파일을 읽지 못했습니다."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function numberText(value, digits = 2) {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return "-";
+      return num.toLocaleString("ko-KR", { maximumFractionDigits: digits });
+    }
+
+    function renderHeightResult(json) {
+      lastHeightRows = json.rows || [];
+      lastHeightTotals = json.totals || null;
+      $("heightResult").style.display = "block";
+      $("blockAverageHeight").textContent = `${numberText(json.totals.blockAverageHeight, 2)} m`;
+      $("blockTotalVolume").textContent = `${numberText(json.totals.volume, 1)} ㎥`;
+      $("blockTotalFloorArea").textContent = `${numberText(json.totals.floorArea, 1)} ㎡`;
+      $("heightResultBody").innerHTML = lastHeightRows.map((row) => `
+        <tr title="${escapeHtml(row.method || "")}">
+          <td>${escapeHtml(row.parcel || "")}</td>
+          <td>${escapeHtml(row.zone || "-")}</td>
+          <td>${numberText(row.area, 2)}</td>
+          <td title="${escapeHtml(row.coverageSource || "")}">${numberText(row.coverageRatio, 2)}%</td>
+          <td>${numberText(row.floorArea, 2)}</td>
+          <td title="${escapeHtml(row.roadDetail || "")}">${escapeHtml(row.roadName || "-")}</td>
+          <td>${numberText(row.roadWidth, 2)}</td>
+          <td>${numberText(row.frontage, 2)}</td>
+          <td>${numberText(row.depth, 2)}</td>
+          <td>${numberText(row.avgHeight, 2)}</td>
+          <td>${numberText(row.volume, 2)}</td>
+          <td>${escapeHtml(row.confidence || "-")}</td>
+        </tr>
+      `).join("");
+    }
+
+    async function calculateBlockHeight() {
+      const button = $("calculateBlockHeight");
+      try {
+        if (!(await checkBridge())) return;
+        const heightListFile = await readHeightListFile();
+        if (!heightListFile) throw new Error("필지 지적 리스트 파일을 첨부해 주세요.");
+        setBusy(button, true, "산정 중...");
+        status("블록별 평균높이를 산정하는 중입니다...");
+        const payload = {
+          heightListFile,
+          ordinanceCoverage: $("ordinanceCoverage").value.trim(),
+          districtPlanCoverage: $("districtPlanCoverage").value.trim(),
+          slopeMultiplier: $("heightSlopeMultiplier").value.trim(),
+          frontage: $("heightFrontage").value.trim(),
+          lotDepth: $("heightLotDepth").value.trim()
+        };
+        const res = await fetch(`${bridgeBase}/api/calculate-block-height`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "평균높이 산정 실패");
+        renderHeightResult(json);
+        status(`블록별 평균높이 산정 완료\n필지 수: ${json.totals.parcelCount}\n평균높이: ${numberText(json.totals.blockAverageHeight, 2)}m\n체적 합계: ${numberText(json.totals.volume, 1)}㎥\n바닥면적 합계: ${numberText(json.totals.floorArea, 1)}㎡`);
+      } catch (error) {
+        status(error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    }
+
+    async function analyzeSelectedParcels() {
+      const button = $("analyzeSelectedParcels");
+      try {
+        const data = values();
+        if (!data.apiKey) throw new Error("선택필지 자동분석에는 VWorld API 키가 필요합니다.");
+        if (!pickedParcels.length) throw new Error("지도에서 필지를 먼저 선택해 주세요.");
+        if (!(await checkBridge())) return;
+        setBusy(button, true, "분석 중...");
+        status("선택필지 도형, 접도 도로, 필지깊이를 자동분석하는 중입니다...");
+        const payload = {
+          apiKey: data.apiKey,
+          lawApiKey: $("lawApiKey").value.trim(),
+          parcelListItems: pickedParcels.map((item) => ({ parcel: item.parcel, lat: item.lat, lon: item.lon })),
+          ordinanceCoverage: $("ordinanceCoverage").value.trim(),
+          districtPlanCoverage: $("districtPlanCoverage").value.trim(),
+          slopeMultiplier: $("heightSlopeMultiplier").value.trim(),
+          reviewNote: $("heightReviewNote").value.trim()
+        };
+        const res = await fetch(`${bridgeBase}/api/analyze-selected-parcels`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "선택필지 자동분석 실패");
+        renderHeightResult(json);
+        status(`선택필지 자동분석 완료\n필지 수: ${json.totals.parcelCount}\n평균높이: ${numberText(json.totals.blockAverageHeight, 2)}m\n체적 합계: ${numberText(json.totals.volume, 1)}\n바닥면적 합계: ${numberText(json.totals.floorArea, 1)}\n\n조례/지구단위계획 확인값을 입력하면 그 건폐율이 우선 적용됩니다.`);
+      } catch (error) {
+        status(error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    }
+
+    async function downloadHeightReport() {
+      if (!lastHeightRows.length) {
+        status("먼저 블록별 평균높이를 산정해 주세요.");
+        return;
+      }
+      const button = $("downloadHeightCsv");
+      try {
+        if (!(await checkBridge())) return;
+        setBusy(button, true, "생성 중...");
+        status("엑셀 보고서를 생성하는 중입니다...");
+        const payload = {
+          rows: lastHeightRows,
+          totals: lastHeightTotals || {},
+          slopeMultiplier: $("heightSlopeMultiplier").value.trim()
+        };
+        const res = await fetch(`${bridgeBase}/api/height-report`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "엑셀 보고서 생성 실패");
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `block_height_report_${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        status("\uc5d1\uc140 \ubcf4\uace0\uc11c \ub2e4\uc6b4\ub85c\ub4dc\ub97c \uc2dc\uc791\ud588\uc2b5\ub2c8\ub2e4. \uc140\uc758 \uc218\uc2dd\uc73c\ub85c \uacc4\uc0b0 \uacfc\uc815\uc744 \uc5ed\ucd94\uc801\u00b7\uac80\uc0b0\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4.");
+      } catch (error) {
+        status(error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    }
+
+    async function runCadastre() {
+      const button = $("runCadastre");
+      try {
+        const data = requireInputs({ requireApiKey: true, requireVWorldLogin: true });
+        if (!(await checkBridge())) return;
+        setBusy(button, true, "실행 중...");
+        status("연속지적 작업을 시작합니다...");
+        const parcelListFile = await readParcelListFile();
+        const parcelListItems = pickedParcels.map((item) => ({ parcel: item.parcel, lat: item.lat, lon: item.lon }));
+        const payload = { ...data };
+        if (parcelListFile) payload.parcelListFile = parcelListFile;
+        if (parcelListItems.length) payload.parcelListItems = parcelListItems;
+        const res = await fetch(`${bridgeBase}/api/run-cadastre`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "실행 실패");
+        status(`연속지적 작업을 시작했습니다.\n진행 상태는 아래 표에서 확인하세요.\n결과 폴더: ${json.outDir}`);
+        renderCadastreProgress({ running: true, log: "", outDir: json.outDir, logPath: json.logPath });
+        const timer = setInterval(async () => {
+          const statusRes = await fetch(`${bridgeBase}/api/status?jobId=${encodeURIComponent(json.jobId)}`);
+          const job = await statusRes.json();
+          if (!job.ok) {
+            clearInterval(timer);
+            setBusy(button, false);
+            status(job.error || "상태 확인 실패");
+            return;
+          }
+          renderCadastreProgress(job);
+          if (!job.running) {
+            clearInterval(timer);
+            setBusy(button, false);
+            status(job.exitCode === 0
+              ? `연속지적 작업이 완료되었습니다.\n결과 폴더: ${job.outDir}`
+              : `작업이 종료되었습니다(코드 ${job.exitCode}).\n원본 로그를 확인하세요.`);
+          }
+        }, 2500);
+      } catch (error) {
+        setBusy(button, false);
+        status(error.message);
+      }
+    }
+
+    async function selectFolder() {
+      const button = $("selectFolder");
+      try {
+        if (!(await checkBridge())) return;
+        setBusy(button, true, "...");
+        status("저장 폴더 선택창을 여는 중입니다...");
+        const res = await fetch(`${bridgeBase}/api/select-folder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initialDir: $("outDir").value.trim() })
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "폴더 선택 실패");
+        if (json.path) {
+          $("outDir").value = json.path;
+          status(`저장 폴더를 설정했습니다.\n${json.path}`);
+        } else {
+          status("폴더 선택을 취소했습니다.");
+        }
+      } catch (error) {
+        status(error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    }
+
+    $("showMap").addEventListener("click", showMap);
+    $("downloadMap").addEventListener("click", downloadPng);
+    $("runCadastre").addEventListener("click", runCadastre);
+    $("calculateBlockHeight").addEventListener("click", calculateBlockHeight);
+    $("analyzeSelectedParcels").addEventListener("click", analyzeSelectedParcels);
+    $("downloadHeightCsv").addEventListener("click", downloadHeightReport);
+    $("selectFolder").addEventListener("click", selectFolder);
+    // 지도 필지 선택 UI는 두 카드에서 공유(.js-* 클래스)되며 동일하게 동작한다.
+    function setPickMode(on) {
+      document.querySelectorAll(".js-pickmode").forEach((cb) => { cb.checked = on; });
+      if (on && !$("showCadastre").checked && $("apiKey").value.trim()) {
+        $("showCadastre").checked = true;
+        updateCadastreOverlay();
+      }
+    }
+    document.querySelectorAll(".js-pickmode").forEach((cb) => {
+      cb.addEventListener("change", () => setPickMode(cb.checked));
+    });
+    document.querySelectorAll(".js-clear-picks").forEach((btn) => {
+      btn.addEventListener("click", clearParcelPicks);
+    });
+    document.querySelectorAll(".js-parcel-list").forEach((list) => {
+      list.addEventListener("click", (event) => {
+        const btn = event.target.closest(".rm");
+        if (btn) removeParcelPick(Number(btn.dataset.idx));
+      });
+    });
+    map.on("click", pickParcelFromMap);
+    document.querySelectorAll(".mapType").forEach((input) => input.addEventListener("change", updateBaseMap));
+    $("showCadastre").addEventListener("change", updateCadastreOverlay);
+    $("showRadius").addEventListener("change", updateRadiusPreview);
+    ["vworldId", "vworldPassword", "apiKey", "lawApiKey", "outDir"].forEach((id) => {
+      const input = $(id);
+      const saved = localStorage.getItem(`cadastre.${id}`);
+      if (saved) input.value = saved;
+      input.addEventListener("input", () => {
+        localStorage.setItem(`cadastre.${id}`, input.value);
+        if (id === "apiKey" && $("showCadastre").checked) updateCadastreOverlay();
+      });
+    });
+    // API 키 입력이 끝나면(블러/엔터) 위성 베이스를 VWorld로 전환해 지적선 정합을 맞춘다.
+    $("apiKey").addEventListener("change", () => {
+      if (document.querySelector(".mapType:checked").value === "satellite") updateBaseMap();
+    });
+
+    updateBaseMap();
+    updateRadiusPreview();
+    renderParcelPickList();
+    checkBridge(true);
+  </script>
+
+  <script>
+    // UI/UX 보강 (기존 로직과 분리된 IIFE, 전역 충돌 없음)
+    (function () {
+      const byId = (id) => document.getElementById(id);
+
+      // 1) 패널 접기/펴기 — 지도를 넓게 보고 싶을 때
+      const panel = byId("bridgePanel");
+      const toggle = byId("panelToggle");
+      if (panel && toggle) {
+        toggle.addEventListener("click", () => {
+          const collapsed = panel.classList.toggle("collapsed");
+          toggle.textContent = collapsed ? "▸" : "▾";
+          toggle.setAttribute("title", collapsed ? "패널 펴기" : "패널 접기");
+        });
+      }
+
+      // 2) 비밀번호 / API 키 표시·가리기 토글
+      document.querySelectorAll(".reveal").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const input = byId(btn.dataset.target);
+          if (!input) return;
+          const show = input.type === "password";
+          input.type = show ? "text" : "password";
+          btn.classList.toggle("on", show);
+          btn.setAttribute("aria-label", show ? "가리기" : "표시");
+        });
+      });
+
+      // 3) 주소 입력 후 Enter → '위치도 보기'
+      const address = byId("address");
+      const showMapBtn = byId("showMap");
+      if (address && showMapBtn) {
+        address.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            showMapBtn.click();
+          }
+        });
+      }
+
+    })();
+  </script>
+</body>
+</html>
