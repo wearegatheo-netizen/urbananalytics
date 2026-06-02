@@ -742,6 +742,23 @@
         </div>
       </details>
 
+      <details class="card" id="cardDxf">
+        <summary>연속지적 DXF 내려받기<span class="chev">▾</span></summary>
+        <div class="card-body">
+          <p class="hint">입력한 주소 반경 내 연속지적(필지 경계)+용도지역을 VWorld에서 모아 <b>CAD용 DXF</b>(EPSG:5186 좌표)로 내려받습니다. QGIS 없이 웹에서 동작합니다. (지적도 데이터에는 VWorld API 키 필요)</p>
+          <div class="grid-2">
+            <div class="field">
+              <label for="dxfRadius">반경(m) · 50~1000</label>
+              <input id="dxfRadius" type="number" min="50" max="1000" step="50" value="300">
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button id="downloadCadastreDxf" class="small-button" type="button" style="width:100%">DXF 다운로드</button>
+            </div>
+          </div>
+        </div>
+      </details>
+
       <details class="card" id="cardHeight">
         <summary>블록별 평균높이 산정<span class="chev">▾</span></summary>
         <div class="card-body">
@@ -1484,6 +1501,41 @@
       }
     }
 
+    async function downloadCadastreDxf() {
+      const button = $("downloadCadastreDxf");
+      try {
+        const data = requireInputs({ requireApiKey: true });
+        if (!(await checkBridge())) return;
+        setBusy(button, true, "생성 중...");
+        const radius = Math.max(50, Math.min(Number($("dxfRadius").value.trim() || 300), 1000));
+        status(`연속지적 DXF 생성 중입니다(반경 ${radius}m). 범위가 넓으면 시간이 걸릴 수 있습니다...`);
+        const params = new URLSearchParams({ address: data.address, apiKey: data.apiKey, radius: String(radius) });
+        const res = await fetch(`${bridgeBase}/api/cadastre-dxf?${params.toString()}`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "DXF 생성 실패");
+        }
+        const parcels = res.headers.get("X-Parcel-Count");
+        const zones = res.headers.get("X-Zone-Count");
+        const truncated = res.headers.get("X-Truncated") === "1";
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `cadastre_${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}.dxf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        status(`연속지적 DXF 다운로드를 시작했습니다.\n필지 ${parcels}개 · 용도지역 ${zones}개 (EPSG:5186)`
+          + (truncated ? "\n※ 범위가 넓어 일부 필지가 누락됐을 수 있습니다. 반경을 줄여보세요." : ""));
+      } catch (error) {
+        status(error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    }
+
     async function runCadastre() {
       const button = $("runCadastre");
       try {
@@ -1561,6 +1613,7 @@
     $("calculateBlockHeight").addEventListener("click", calculateBlockHeight);
     $("analyzeSelectedParcels").addEventListener("click", analyzeSelectedParcels);
     $("downloadHeightCsv").addEventListener("click", downloadHeightReport);
+    $("downloadCadastreDxf").addEventListener("click", downloadCadastreDxf);
     $("selectFolder").addEventListener("click", selectFolder);
     // 지도 필지 선택 UI는 두 카드에서 공유(.js-* 클래스)되며 동일하게 동작한다.
     function setPickMode(on) {

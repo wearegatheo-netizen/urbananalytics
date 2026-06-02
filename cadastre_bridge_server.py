@@ -181,6 +181,135 @@ def feature_centroid_distance(feature, lon, lat):
     return (cx - lon) ** 2 + (cy - lat) ** 2
 
 
+def deg_box(lat, lon, radius_m):
+    dlat = radius_m / 111320.0
+    dlon = radius_m / (111320.0 * max(math.cos(math.radians(lat)), 1e-9))
+    return lon - dlon, lat - dlat, lon + dlon, lat + dlat
+
+
+def build_cadastre_dxf(address, api_key, radius):
+    """반경 내 연속지적(필지)+용도지역을 VWorld WFS로 모아 EPSG:5186 좌표의 DXF로 생성(웹용, QGIS 불필요)."""
+    if not api_key:
+        raise ValueError("연속지적 DXF에는 VWorld API 키가 필요합니다.")
+    import ezdxf
+    from ezdxf.enums import TextEntityAlignment
+    from pyproj import Transformer
+
+    radius = max(50.0, min(parse_float(radius, 300.0) or 300.0, 1000.0))
+    lat, lon, refined = geocode(address, api_key)
+    minx, miny, maxx, maxy = deg_box(lat, lon, radius)
+    tf = Transformer.from_crs("EPSG:4326", "EPSG:5186", always_xy=True)
+    cx, cy = tf.transform(lon, lat)
+
+    fetch_errors = []
+
+    def fetch(typename, maxf):
+        params = {
+            "REQUEST": "GetFeature", "TYPENAME": typename, "VERSION": "1.1.0",
+            "MAXFEATURES": str(maxf), "SRSNAME": "EPSG:4326", "OUTPUT": "json",
+            "BBOX": f"{minx},{miny},{maxx},{maxy}", "KEY": api_key,
+        }
+        url = "https://api.vworld.kr/req/wfs?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                raw = res.read().decode("utf-8", errors="replace")
+        except Exception as exc:
+            fetch_errors.append(f"{typename}: {type(exc).__name__} {str(exc)[:140]}")
+            return [], maxf
+        try:
+            feats = json.loads(raw).get("features")
+            return (feats or []), maxf
+        except Exception:
+            exc_match = re.search(r"<ServiceException[^>]*>(.*?)</ServiceException>", raw, re.S)
+            msg = exc_match.group(1).strip() if exc_match else raw[:200]
+            fetch_errors.append(f"{typename}: {msg[:240]}")
+            return [], maxf
+
+    bubun, mb = fetch("lp_pa_cbnd_bubun", 1000)
+    bonbun, _ = fetch("lp_pa_cbnd_bonbun", 1000)
+    zones, _ = fetch("lt_c_uq111", 300)
+    truncated = len(bubun) >= mb or len(bonbun) >= mb
+
+    doc = ezdxf.new("R2010")
+    try:
+        doc.units = 6  # meters
+    except Exception:
+        pass
+    for name, color in [("연속지적_필지", 7), ("지번", 3), ("용도지역", 5), ("용도지역명", 6), ("기준점", 1)]:
+        if name not in doc.layers:
+            doc.layers.add(name, color=color)
+    msp = doc.modelspace()
+
+    def proj_ring(ring):
+        return [tf.transform(float(p[0]), float(p[1])) for p in ring if len(p) >= 2]
+
+    def add_feature(feature, line_layer, text_layer, label, text_h):
+        rings = [r for r in geometry_rings(feature.get("geometry") or {}) if len(r) >= 4]
+        if not rings:
+            return None
+        best, best_area = None, -1.0
+        for ring in rings:
+            pts = proj_ring(ring)
+            if len(pts) < 3:
+                continue
+            msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": line_layer})
+            area = abs(projected_polygon_area(pts))
+            if area > best_area:
+                best_area, best = area, pts
+        if best is None:
+            return None
+        ccx = sum(p[0] for p in best) / len(best)
+        ccy = sum(p[1] for p in best) / len(best)
+        if label:
+            msp.add_text(label, height=text_h, dxfattribs={"layer": text_layer}).set_placement(
+                (ccx, ccy), align=TextEntityAlignment.MIDDLE_CENTER
+            )
+        return (round(ccx, 1), round(ccy, 1))
+
+    seen = set()
+    parcel_count = 0
+    for feature in bubun + bonbun:
+        props = feature.get("properties") or {}
+        jibun = str(props.get("jibun") or props.get("bonbun") or "").strip()
+        key = add_feature(feature, "연속지적_필지", "지번", jibun, 1.5)
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        parcel_count += 1
+
+    zone_count = 0
+    for feature in zones:
+        props = feature.get("properties") or {}
+        uname = str(props.get("uname") or "").strip()
+        if add_feature(feature, "용도지역", "용도지역명", uname, 3.0) is not None:
+            zone_count += 1
+
+    if not parcel_count and not zone_count and fetch_errors:
+        raise ValueError(
+            "VWorld 데이터(WFS) 조회에 실패했습니다: " + fetch_errors[0]
+            + " · 키의 '데이터 API(WFS)' 권한과 인증 도메인, 일일 사용량을 확인하세요."
+        )
+
+    msp.add_circle((cx, cy), radius, dxfattribs={"layer": "기준점"})
+    msp.add_point((cx, cy), dxfattribs={"layer": "기준점"})
+    msp.add_text(f"기준점: {refined} (반경 {int(radius)}m)", height=2.5,
+                 dxfattribs={"layer": "기준점"}).set_placement((cx, cy + radius + 5))
+
+    import tempfile
+    path = tempfile.mktemp(suffix=".dxf")
+    doc.saveas(path)
+    with open(path, "rb") as fh:
+        data = fh.read()
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    return {"data": data, "parcelCount": parcel_count, "zoneCount": zone_count,
+            "refined": refined, "radius": int(radius), "truncated": truncated,
+            "errors": fetch_errors}
+
+
 def get_parcel_feature(lat, lon, api_key):
     if not api_key:
         raise ValueError("지적도 도형 조회에는 VWorld API 키가 필요합니다.")
@@ -1769,6 +1898,23 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 radius = float(qs.get("radius", ["2500"])[0])
                 facilities = get_context_facilities(lat, lon, radius)
                 json_response(self, {"ok": True, "facilities": facilities})
+                return
+            if path == "/api/cadastre-dxf":
+                address = qs.get("address", [""])[0].strip()
+                api_key = qs.get("apiKey", [""])[0].strip()
+                radius = qs.get("radius", ["300"])[0]
+                result = build_cadastre_dxf(address, api_key, radius)
+                data = result["data"]
+                cors_headers(self, content_type="application/dxf")
+                fname = urllib.parse.quote(f"연속지적_{result['refined']}_{result['radius']}m.dxf".replace(" ", "_"))
+                self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{fname}")
+                self.send_header("X-Parcel-Count", str(result["parcelCount"]))
+                self.send_header("X-Zone-Count", str(result["zoneCount"]))
+                self.send_header("X-Truncated", "1" if result["truncated"] else "0")
+                self.send_header("X-Errors", urllib.parse.quote(" | ".join(result.get("errors") or [])[:400]))
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
                 return
             if path == "/api/satellite-map":
                 address = qs.get("address", [""])[0].strip()
