@@ -977,7 +977,8 @@ def analyze_selected_parcels(payload):
     # 수동 입력값(있으면 우선)
     manual_district = parse_float(payload.get("districtPlanCoverage"), None)
     manual_ordinance = parse_float(payload.get("ordinanceCoverage"), None)
-    manual_setback = parse_float(payload.get("setback"), None)  # 건축선 후퇴(m) 직접 지정
+    manual_front = parse_float(payload.get("setbackFront"), parse_float(payload.get("setback"), None))  # 전면건축선후퇴(m)
+    manual_rear = parse_float(payload.get("setbackRear"), None)  # 후면건축선후퇴(m)
     rows = []
     total_floor_area = 0.0
     total_volume = 0.0
@@ -1051,25 +1052,27 @@ def analyze_selected_parcels(payload):
         depth = area / frontage
         coverage_ratio = coverage / 100.0 if coverage > 1 else coverage
 
-        # 건축선 반영:
-        #  - 소요너비 미달 도로(<4m)는 (4-도로폭)/2 양측 후퇴 + 도로폭 4m로 보정(건축법 §46①)
-        #  - 지구단위 건축한계선 등은 '건축선 후퇴(m)' 입력으로 직접 지정(있으면 우선)
-        #  - 후퇴면적(접도길이×후퇴거리)은 건폐 적용 대지에서 제외
+        # 건축선 반영(서울시 높이계획 방법론):
+        #  - 소요너비 미달 도로(<4m)는 도로폭 4m로 보정
+        #  - 전면건축선후퇴는 도로사선 기준거리에 '가산': 최저=1.5×(도로폭+전면후퇴),
+        #    최고=1.5×(도로폭+전면후퇴+(획지깊이-후면후퇴))
+        #  - 바닥면적은 대지면적 '전체'×건폐율(후퇴분을 면적에서 빼지 않음)
         raw_road = road_width
-        shortfall_setback = (4.0 - raw_road) / 2.0 if raw_road < 4.0 else 0.0
-        setback = manual_setback if (manual_setback is not None and manual_setback > 0) else shortfall_setback
-        road_width_used = max(raw_road, 4.0) if shortfall_setback > 0 else raw_road
-        setback_area = frontage * setback
-        effective_area = max(area - setback_area, 0.0)
+        road_width_used = max(raw_road, 4.0) if raw_road < 4.0 else raw_road
+        front_setback = manual_front if (manual_front is not None and manual_front > 0) else 0.0
+        rear_setback = manual_rear if (manual_rear is not None and manual_rear > 0) else 0.0
+        eff_depth = max(depth - rear_setback, 0.0)
+        sine_base = road_width_used + front_setback
 
-        floor_area = effective_area * coverage_ratio
-        min_height = slope_multiplier * road_width_used
-        max_height = slope_multiplier * (road_width_used + depth)
+        floor_area = area * coverage_ratio
+        min_height = slope_multiplier * sine_base
+        max_height = slope_multiplier * (sine_base + eff_depth)
         avg_height = (min_height + max_height) / 2.0
         volume = floor_area * avg_height
-        if setback > 0:
-            road_detail += (f" · 건축선후퇴 {round(setback, 2)}m"
-                            f"(유효대지 {round(effective_area, 1)}㎡, 도로폭 {round(road_width_used, 1)}m 적용)")
+        if front_setback or rear_setback or road_width_used != raw_road:
+            road_detail += (f" · 건축선후퇴 전면{round(front_setback, 2)}m"
+                            + (f"·후면{round(rear_setback, 2)}m" if rear_setback else "")
+                            + (f", 도로폭 {round(road_width_used, 1)}m 적용" if road_width_used != raw_road else ""))
         total_floor_area += floor_area
         total_volume += volume
         cov_ok = cov_source.startswith(("지구단위", "조례", "시행령"))
@@ -1084,10 +1087,9 @@ def analyze_selected_parcels(payload):
                 "members": ", ".join(member_parcels),
                 "isHoekji": is_hoekji,
                 "zone": zone or "-",
-                "area": round(effective_area, 3),
-                "lotArea": round(area, 3),
-                "setback": round(setback, 3),
-                "setbackArea": round(setback_area, 3),
+                "area": round(area, 3),
+                "frontSetback": round(front_setback, 3),
+                "rearSetback": round(rear_setback, 3),
                 "coverageRatio": round(coverage_ratio * 100, 3),
                 "coverageSource": cov_source,
                 "floorArea": round(floor_area, 3),
@@ -2013,10 +2015,10 @@ def build_height_report_xlsx(payload):
         ws.cell(row=rr, column=15, value=row.get("confidence") or "")
 
         checks = []
-        setback_r = parse_float(row.get("setback"))
-        lot_area = parse_float(row.get("lotArea"))
-        if setback_r and setback_r > 0 and lot_area:
-            checks.append(f"건축선후퇴 {_fmt_num(setback_r)}m → 유효대지={_fmt_num(area)}(원{_fmt_num(lot_area)})")
+        fsb = parse_float(row.get("frontSetback"))
+        rsb = parse_float(row.get("rearSetback"))
+        if (fsb and fsb > 0) or (rsb and rsb > 0):
+            checks.append(f"건축선후퇴 전면{_fmt_num(fsb or 0)}/후면{_fmt_num(rsb or 0)}m(도로사선 기준거리=도로폭+전면후퇴)")
         if area is not None and cov is not None:
             checks.append(f"바닥면적={_fmt_num(area)}×{_fmt_num(cov)}%={_fmt_num(fl)}")
         if roadsine:

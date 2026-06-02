@@ -816,9 +816,15 @@
               <input id="districtPlanCoverage" type="number" min="0" step="1" placeholder="우선 적용">
             </div>
           </div>
-          <div class="field">
-            <label for="heightSetback">건축선 후퇴(m)</label>
-            <input id="heightSetback" type="number" min="0" step="0.1" placeholder="자동(소요너비 미달 <4m 도로) · 지구단위 건축한계선이면 직접 입력">
+          <div class="grid-2">
+            <div class="field">
+              <label for="heightSetbackFront">전면 건축선후퇴(m)</label>
+              <input id="heightSetbackFront" type="number" min="0" step="0.1" placeholder="도로사선에 가산(지구단위 등)">
+            </div>
+            <div class="field">
+              <label for="heightSetbackRear">후면 건축선후퇴(m)</label>
+              <input id="heightSetbackRear" type="number" min="0" step="0.1" placeholder="획지깊이에서 차감">
+            </div>
           </div>
           <div class="field">
             <label for="heightReviewNote">조례/결정도서 확인 메모</label>
@@ -1491,7 +1497,7 @@
         <tr title="${escapeHtml(row.method || "")}">
           <td title="${escapeHtml(row.members || row.parcel || "")}">${escapeHtml(row.parcel || "")}</td>
           <td>${escapeHtml(row.zone || "-")}</td>
-          <td title="${row.setback ? `원 대지 ${numberText(row.lotArea, 2)}㎡ − 건축선후퇴 ${numberText(row.setbackArea, 2)}㎡(후퇴 ${numberText(row.setback, 2)}m)` : ""}">${numberText(row.area, 2)}${row.setback ? " *" : ""}</td>
+          <td>${numberText(row.area, 2)}</td>
           <td title="${escapeHtml(row.coverageSource || "")}">${numberText(row.coverageRatio, 2)}%</td>
           <td>${numberText(row.floorArea, 2)}</td>
           <td title="${escapeHtml(row.roadDetail || "")}">${escapeHtml(row.roadName || "-")}</td>
@@ -1553,7 +1559,8 @@
           ordinanceCoverage: $("ordinanceCoverage").value.trim(),
           districtPlanCoverage: $("districtPlanCoverage").value.trim(),
           slopeMultiplier: $("heightSlopeMultiplier").value.trim(),
-          setback: $("heightSetback").value.trim(),
+          setbackFront: $("heightSetbackFront").value.trim(),
+          setbackRear: $("heightSetbackRear").value.trim(),
           reviewNote: $("heightReviewNote").value.trim()
         };
         const res = await fetch(`${bridgeBase}/api/analyze-selected-parcels`, {
