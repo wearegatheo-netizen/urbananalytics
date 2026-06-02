@@ -845,10 +845,10 @@ def upis_road_features(lat, lon, api_key):
     return feats
 
 
-def resolve_road_width(subject_ring, projected, area, lat, lon, api_key, fallback):
-    """획지/필지 경계에 '가장 많이 접한'(frontage 최대) 도로를 찾아 그 도로폭과 접도길이를 반환.
-       후보: 지목 도로(연속지적)·도시계획시설(UPIS)·OSM. 접도길이가 가장 큰 도로를 채택하고,
-       깊이는 그 접도길이로 산정한다."""
+def resolve_road_width(subject_ring, projected, area, lat, lon, api_key, fallback, slope=1.5):
+    """접하는 모든 도로(지목/도시계획/OSM) 각각에 도로사선을 적용해, 최고높이가 '최소'가 되는
+       도로를 채택한다(둘 이상 도로 접 시 장변·단변 각각 적용 후 최소값 → 단변 기준 자동 충족).
+       채택 도로의 도로폭과 접도길이를 반환."""
     origin_lat = lat
     subj_seg = polygon_segments([project_point(float(p[0]), float(p[1]), origin_lat)
                                  for p in subject_ring if len(p) >= 2])
@@ -906,10 +906,19 @@ def resolve_road_width(subject_ring, projected, area, lat, lon, api_key, fallbac
 
     if candidates:
         prio = {"지목 도로": 0, "도시계획시설": 1, "OSM": 2}
-        # 접도길이 최대 → 동률이면 가까운 도로 → 출처 우선순위
-        candidates.sort(key=lambda c: (-c["frontage"], c["dist"], prio.get(c["source"], 9)))
+        # 각 접도 도로에 도로사선 적용 → 그 도로의 최고높이 = slope×(도로폭 + 깊이),
+        # 깊이 = 면적 ÷ 그 도로의 접도길이(장변쪽 도로→작은 깊이=단변). 최고높이가 '최소'인 도로 채택.
+        for c in candidates:
+            fr = c["frontage"] or math.sqrt(area)
+            dep = area / fr
+            w_eval = max(c["width"], 4.0) if c["width"] < 4.0 else c["width"]  # 소요너비 미달 4m 보정
+            c["maxh"] = slope * (w_eval + dep)
+        candidates.sort(key=lambda c: (round(c["maxh"], 3), -c["frontage"], prio.get(c["source"], 9)))
         best = candidates[0]
-        detail = " · ".join(f"{c['source']} {c['width']}m(접도{c['frontage']}m)" for c in candidates[:3])
+        detail = " · ".join(
+            f"{c['source']} 폭{c['width']}m·접도{c['frontage']}m→최고{round(c['maxh'], 1)}m"
+            for c in candidates[:4]
+        )
         return best["width"], best["name"], best["source"], detail, best["frontage"]
     return fallback, "접도 도로 자동판정 필요", "기본값", f"기본값={fallback}m", round(math.sqrt(area), 2)
 
@@ -1034,7 +1043,7 @@ def analyze_selected_parcels(payload):
 
         # 도로폭: 경계에 가장 많이 접한 도로 기준(지목도로/도시계획/OSM 중 frontage 최대)
         road_width, road_name, road_source, road_detail, frontage = resolve_road_width(
-            ring, projected, area, c_lat, c_lon, api_key, fallback_road_width
+            ring, projected, area, c_lat, c_lon, api_key, fallback_road_width, slope_multiplier
         )
         if not frontage:
             frontage = math.sqrt(area)
