@@ -394,6 +394,28 @@
       cursor: pointer;
     }
     .pick-item .rm:hover { background: #ffe5e5; color: var(--red); }
+    .pick-item .js-pick-sel { flex: 0 0 auto; width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+    .pick-item.in-hoekji { border-left: 4px solid #bbb; padding-left: 4px; }
+    .hoekji-tag {
+      display: inline-block;
+      margin-right: 6px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 10.5px;
+      font-weight: 800;
+      color: #fff;
+      vertical-align: 1px;
+    }
+    /* 획지 색상(최대 6색 순환) — 태그 배경 + 칩 좌측 보더 */
+    .hoekji-tag[data-h="0"], .pick-item.in-hoekji[data-h="0"] { }
+    .pick-item.in-hoekji[data-h="0"] { border-left-color: #1b4f9c; } .hoekji-tag[data-h="0"] { background: #1b4f9c; }
+    .pick-item.in-hoekji[data-h="1"] { border-left-color: #1f7a4d; } .hoekji-tag[data-h="1"] { background: #1f7a4d; }
+    .pick-item.in-hoekji[data-h="2"] { border-left-color: #b5651d; } .hoekji-tag[data-h="2"] { background: #b5651d; }
+    .pick-item.in-hoekji[data-h="3"] { border-left-color: #8e44ad; } .hoekji-tag[data-h="3"] { background: #8e44ad; }
+    .pick-item.in-hoekji[data-h="4"] { border-left-color: #c0392b; } .hoekji-tag[data-h="4"] { background: #c0392b; }
+    .pick-item.in-hoekji[data-h="5"] { border-left-color: #16805a; } .hoekji-tag[data-h="5"] { background: #16805a; }
+    .pick-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+    .pick-tools .small-button { flex: 1 1 auto; }
 
     .small-button {
       height: 34px;
@@ -802,7 +824,12 @@
             <label class="checkbox-row"><input class="js-pickmode" type="checkbox">위치도에서 지번 클릭 선택</label>
             <div class="pick-list-head">지도 선택 필지 <strong class="js-pick-count" id="heightPickCount">0</strong>개</div>
             <div class="parcel-list js-parcel-list"></div>
-            <button class="small-button js-clear-picks" type="button">선택 지번 지우기</button>
+            <div class="pick-tools">
+              <button class="small-button ghost js-group-parcels" type="button">선택 → 획지로 묶기</button>
+              <button class="small-button ghost js-ungroup-parcels" type="button">묶음 해제</button>
+              <button class="small-button js-clear-picks" type="button">전체 지우기</button>
+            </div>
+            <p class="hint">여러 필지를 체크한 뒤 ‘획지로 묶기’를 누르면, 합쳐진 경계 기준(면적 합·접도길이·깊이)으로 평균높이를 산정합니다.</p>
           </div>
           <div class="actions">
             <button id="calculateBlockHeight" type="button">파일 리스트 산정</button>
@@ -921,6 +948,8 @@
     const pickedParcels = [];
     const pickedParcelKeys = new Set();
     const parcelPickMarkers = [];
+    let nextGroupId = 1;            // 각 필지는 처음엔 단독 획지
+    const pickSelection = new Set(); // 묶기용으로 체크된 필지 인덱스
     let lastHeightRows = [];
     let lastHeightTotals = null;
 
@@ -1074,19 +1103,56 @@
 
     function renderParcelPickList() {
       // 두 카드(연속지적 실행 · 블록 평균높이)에 동일한 선택 목록을 동기화한다.
+      // 같은 group 값을 가진 필지가 2개 이상이면 '획지'로 표시(번호·색 부여).
+      const groupMembers = {};
+      pickedParcels.forEach((it) => { groupMembers[it.group] = (groupMembers[it.group] || 0) + 1; });
+      const hoekjiOrder = [];
+      pickedParcels.forEach((it) => {
+        if (groupMembers[it.group] > 1 && !hoekjiOrder.includes(it.group)) hoekjiOrder.push(it.group);
+      });
       const html = pickedParcels.length
         ? pickedParcels.map((item, idx) => {
             const full = item.parcel || "";
             const { dong, rest } = shortParcelLabel(full);
-            return `<div class="pick-item" title="${escapeHtml(full)}">`
+            const isHoekji = groupMembers[item.group] > 1;
+            const hNo = isHoekji ? hoekjiOrder.indexOf(item.group) + 1 : 0;
+            const checked = pickSelection.has(idx) ? " checked" : "";
+            const tag = isHoekji
+              ? `<span class="hoekji-tag" data-h="${(hNo - 1) % 6}">획지 ${hNo}</span>` : "";
+            return `<div class="pick-item${isHoekji ? " in-hoekji" : ""}" data-h="${isHoekji ? (hNo - 1) % 6 : ""}" title="${escapeHtml(full)}">`
+              + `<input type="checkbox" class="js-pick-sel" data-idx="${idx}"${checked} aria-label="선택">`
               + `<span class="num">${idx + 1}</span>`
-              + `<span class="jibun"><span class="dong">${escapeHtml(dong)}</span>${escapeHtml(rest)}</span>`
+              + `<span class="jibun">${tag}<span class="dong">${escapeHtml(dong)}</span>${escapeHtml(rest)}</span>`
               + `<button class="rm" type="button" data-idx="${idx}" title="삭제" aria-label="${escapeHtml(full)} 삭제">&times;</button>`
               + `</div>`;
           }).join("")
         : '<div class="empty">선택된 지번 없음</div>';
       document.querySelectorAll(".js-parcel-list").forEach((el) => { el.innerHTML = html; });
-      document.querySelectorAll(".js-pick-count").forEach((el) => { el.textContent = String(pickedParcels.length); });
+      const hoekjiCount = hoekjiOrder.length;
+      const soloCount = pickedParcels.filter((it) => groupMembers[it.group] === 1).length;
+      const summary = hoekjiCount
+        ? `${pickedParcels.length}필지 · 획지 ${hoekjiCount}개 + 단독 ${soloCount}`
+        : String(pickedParcels.length);
+      document.querySelectorAll(".js-pick-count").forEach((el) => { el.textContent = summary; });
+    }
+
+    function groupSelectedParcels() {
+      const idxs = [...pickSelection];
+      if (idxs.length < 2) { status("획지로 묶으려면 필지를 2개 이상 체크하세요."); return; }
+      const gid = nextGroupId++;
+      idxs.forEach((i) => { if (pickedParcels[i]) pickedParcels[i].group = gid; });
+      pickSelection.clear();
+      renderParcelPickList();
+      status(`${idxs.length}개 필지를 하나의 획지로 묶었습니다.\n'지도 선택필지 분석'을 누르면 획지 기준으로 산정합니다.`);
+    }
+
+    function ungroupSelectedParcels() {
+      const idxs = [...pickSelection];
+      if (!idxs.length) { status("해제할 필지를 체크하세요."); return; }
+      idxs.forEach((i) => { if (pickedParcels[i]) pickedParcels[i].group = nextGroupId++; });
+      pickSelection.clear();
+      renderParcelPickList();
+      status("선택한 필지의 획지 묶음을 해제했습니다(각각 단독 필지).");
     }
 
     function removeParcelPick(idx) {
@@ -1094,6 +1160,7 @@
       if (!item) return;
       pickedParcels.splice(idx, 1);
       pickedParcelKeys.delete(parcelKey(item.parcel));
+      pickSelection.clear(); // 인덱스가 바뀌므로 선택 초기화
       if (item.layer) {
         try { selectedParcelLayer.removeLayer(item.layer); } catch (_) {}
         try { item.layer.remove(); } catch (_) {}
@@ -1107,6 +1174,7 @@
     function clearParcelPicks() {
       pickedParcels.length = 0;
       pickedParcelKeys.clear();
+      pickSelection.clear();
       while (parcelPickMarkers.length) {
         parcelPickMarkers.pop().remove();
       }
@@ -1156,7 +1224,7 @@
         if (!key) throw new Error("선택한 위치의 지번 번호를 읽지 못했습니다.");
         if (!pickedParcelKeys.has(key)) {
           pickedParcelKeys.add(key);
-          const picked = { parcel: json.parcel, lat: event.latlng.lat, lon: event.latlng.lng, layer: null };
+          const picked = { parcel: json.parcel, lat: event.latlng.lat, lon: event.latlng.lng, layer: null, group: nextGroupId++ };
           pickedParcels.push(picked);
           try {
             picked.layer = await highlightSelectedParcel(event.latlng, data.apiKey);
@@ -1378,7 +1446,7 @@
       $("blockTotalFloorArea").textContent = `${numberText(json.totals.floorArea, 1)} ㎡`;
       $("heightResultBody").innerHTML = lastHeightRows.map((row) => `
         <tr title="${escapeHtml(row.method || "")}">
-          <td>${escapeHtml(row.parcel || "")}</td>
+          <td title="${escapeHtml(row.members || row.parcel || "")}">${escapeHtml(row.parcel || "")}</td>
           <td>${escapeHtml(row.zone || "-")}</td>
           <td>${numberText(row.area, 2)}</td>
           <td title="${escapeHtml(row.coverageSource || "")}">${numberText(row.coverageRatio, 2)}%</td>
@@ -1438,7 +1506,7 @@
         const payload = {
           apiKey: data.apiKey,
           lawApiKey: $("lawApiKey").value.trim(),
-          parcelListItems: pickedParcels.map((item) => ({ parcel: item.parcel, lat: item.lat, lon: item.lon })),
+          parcelListItems: pickedParcels.map((item) => ({ parcel: item.parcel, lat: item.lat, lon: item.lon, group: item.group })),
           ordinanceCoverage: $("ordinanceCoverage").value.trim(),
           districtPlanCoverage: $("districtPlanCoverage").value.trim(),
           slopeMultiplier: $("heightSlopeMultiplier").value.trim(),
@@ -1634,7 +1702,16 @@
         const btn = event.target.closest(".rm");
         if (btn) removeParcelPick(Number(btn.dataset.idx));
       });
+      list.addEventListener("change", (event) => {
+        const cb = event.target.closest(".js-pick-sel");
+        if (!cb) return;
+        const i = Number(cb.dataset.idx);
+        if (cb.checked) pickSelection.add(i); else pickSelection.delete(i);
+        renderParcelPickList(); // 두 목록의 체크 상태 동기화
+      });
     });
+    document.querySelectorAll(".js-group-parcels").forEach((b) => b.addEventListener("click", groupSelectedParcels));
+    document.querySelectorAll(".js-ungroup-parcels").forEach((b) => b.addEventListener("click", ungroupSelectedParcels));
     map.on("click", pickParcelFromMap);
     document.querySelectorAll(".mapType").forEach((input) => input.addEventListener("change", updateBaseMap));
     $("showCadastre").addEventListener("change", updateCadastreOverlay);

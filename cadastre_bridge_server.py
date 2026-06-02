@@ -773,6 +773,46 @@ def resolve_road_width(ring, projected, area, lat, lon, api_key, osm_info, fallb
     return fallback, "접도 도로 자동판정 필요", "기본값", f"기본값={fallback}m"
 
 
+def merge_rings_to_lonlat(member_rings):
+    """여러 필지 ring(lon/lat)을 공유 로컬투영에서 union → 합쳐진 외곽 ring(lon/lat) 반환."""
+    pts = [p for ring in member_rings for p in ring]
+    if not pts:
+        return None
+    origin_lat = sum(float(p[1]) for p in pts) / len(pts)
+    mlon = 111320.0 * max(math.cos(math.radians(origin_lat)), 1e-9)
+    mlat = 111320.0
+    try:
+        from shapely.geometry import Polygon
+        from shapely.ops import unary_union
+    except Exception:
+        return None
+    polys = []
+    for ring in member_rings:
+        coords = [(float(p[0]) * mlon, float(p[1]) * mlat) for p in ring if len(p) >= 2]
+        if len(coords) >= 4:
+            try:
+                poly = Polygon(coords)
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                if (not poly.is_empty) and poly.area > 0:
+                    polys.append(poly)
+            except Exception:
+                pass
+    if not polys:
+        return None
+    try:
+        merged = unary_union(polys)
+    except Exception:
+        return None
+    if merged.geom_type == "MultiPolygon":
+        merged = max(merged.geoms, key=lambda g: g.area)
+    try:
+        ext = list(merged.exterior.coords)
+    except Exception:
+        return None
+    return [[x / mlon, y / mlat] for (x, y) in ext]
+
+
 def analyze_selected_parcels(payload):
     api_key = str(payload.get("apiKey") or "").strip()
     if not api_key:
@@ -790,22 +830,49 @@ def analyze_selected_parcels(payload):
     rows = []
     total_floor_area = 0.0
     total_volume = 0.0
-    for item in parcel_items:
-        lat = float(item.get("lat"))
-        lon = float(item.get("lon"))
-        parcel = str(item.get("parcel") or "").strip() or reverse_geocode_parcel(lat, lon, api_key)
-        collection = get_parcel_feature(lat, lon, api_key)
-        feature = collection["features"][0]
-        ring = primary_ring(feature)
-        projected = project_ring(ring)
-        area = abs(projected_polygon_area(projected))
 
-        # 용도지역 자동판별
-        landuse = get_landuse(lat, lon, api_key) or {}
+    # group 값으로 획지 묶음 구성(없으면 각 필지가 단독 획지). 첫 등장 순서 유지.
+    grouped = []
+    index_of = {}
+    for item in parcel_items:
+        g = item.get("group")
+        key = g if g is not None else f"_solo_{len(grouped)}"
+        if key not in index_of:
+            index_of[key] = len(grouped)
+            grouped.append([])
+        grouped[index_of[key]].append(item)
+
+    for members in grouped:
+        member_rings = []
+        member_parcels = []
+        member_area_sum = 0.0
+        for item in members:
+            m_lat = float(item.get("lat"))
+            m_lon = float(item.get("lon"))
+            m_parcel = str(item.get("parcel") or "").strip() or reverse_geocode_parcel(m_lat, m_lon, api_key)
+            feature = get_parcel_feature(m_lat, m_lon, api_key)["features"][0]
+            ring = primary_ring(feature)
+            member_rings.append(ring)
+            member_parcels.append(m_parcel)
+            member_area_sum += abs(projected_polygon_area(project_ring(ring)))
+
+        if len(member_rings) <= 1:
+            ring = member_rings[0]
+            area = abs(projected_polygon_area(project_ring(ring)))
+        else:
+            # 여러 필지를 하나의 획지로 합침(외곽선은 union, 면적은 비중첩 합)
+            merged_ring = merge_rings_to_lonlat(member_rings)
+            ring = merged_ring if merged_ring else member_rings[0]
+            area = member_area_sum
+        projected = project_ring(ring)
+        c_lat, c_lon = lonlat_centroid(ring)
+
+        # 용도지역 자동판별(획지 중심)
+        landuse = get_landuse(c_lat, c_lon, api_key) or {}
         zone = landuse.get("zone")
         sigungu = landuse.get("sigungu")
 
-        # 건폐율: 지구단위계획(입력) > 조례(입력 또는 법제처 자동) > 시행령 상한 > 없음
+        # 건폐율: 지구단위계획(입력) > 조례(입력/법제처) > 시행령 상한 > 없음
         coverage = None
         cov_source = "확인 필요"
         if manual_district:
@@ -823,10 +890,10 @@ def analyze_selected_parcels(payload):
         if not coverage:
             coverage, cov_source = 60.0, "확인 필요(기본 60% 가정)"
 
-        # 도로폭: 지목도로 + 도시계획시설 + OSM 모두 산정 후 채택
+        # 도로폭: 획지 외곽 기준 (지목도로 + 도시계획시설 + OSM)
         osm_info = analyze_roads_for_ring(ring, projected, area)
         road_width, road_name, road_source, road_detail = resolve_road_width(
-            ring, projected, area, lat, lon, api_key, osm_info, fallback_road_width
+            ring, projected, area, c_lat, c_lon, api_key, osm_info, fallback_road_width
         )
         frontage = osm_info["frontage"] or math.sqrt(area)
         depth = area / frontage if frontage else math.sqrt(area)
@@ -840,9 +907,15 @@ def analyze_selected_parcels(payload):
         total_volume += volume
         cov_ok = cov_source.startswith(("지구단위", "조례", "시행령"))
         confidence = "상" if (road_source in ("지목 도로", "도시계획시설") and cov_ok) else "중" if cov_ok else "하"
+
+        is_hoekji = len(member_parcels) > 1
+        label = f"{member_parcels[0]} 외 {len(member_parcels) - 1}필지" if is_hoekji else member_parcels[0]
         rows.append(
             {
-                "parcel": parcel,
+                "parcel": label,
+                "parcelCount": len(member_parcels),
+                "members": ", ".join(member_parcels),
+                "isHoekji": is_hoekji,
                 "zone": zone or "-",
                 "area": round(area, 3),
                 "coverageRatio": round(coverage_ratio * 100, 3),
@@ -858,7 +931,7 @@ def analyze_selected_parcels(payload):
                 "maxHeight": round(max_height, 3),
                 "avgHeight": round(avg_height, 3),
                 "volume": round(volume, 3),
-                "method": "선택필지 자동분석",
+                "method": "획지 자동분석" if is_hoekji else "선택필지 자동분석",
                 "confidence": confidence,
                 "note": review_note,
             }
