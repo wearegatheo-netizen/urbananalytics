@@ -376,6 +376,9 @@
     .segmented label:has(input:checked) input { accent-color: #fff; }
     .segmented.seg4 { grid-template-columns: repeat(4, 1fr); gap: 5px; }
     .segmented.seg4 label { gap: 3px; padding: 5px 2px; font-size: 12px; }
+    .segmented.seg5 { grid-template-columns: repeat(5, 1fr); gap: 4px; }
+    .segmented.seg5 label { flex-direction: column; gap: 3px; padding: 6px 1px; font-size: 11px; min-height: 42px; }
+    .segmented.seg5 input { width: 13px; height: 13px; }
     .segmented.seg2 { grid-template-columns: repeat(2, 1fr); }
     .segmented.seg2 label { min-height: 40px; font-size: 13px; }
     #heightModeToggle { margin: 12px 0 2px; }
@@ -619,6 +622,19 @@
     .leaflet-control-attribution { font-size: 11px; }
     /* 지적도 보기: 옅은 회색 배경 → 위에 깔린 Positron의 흰 도로가 또렷이 대비(도로강조) */
     .leaflet-container.cadastre-map { background: #e7ebef; }
+    /* 용도지역 범례 */
+    .map-legend {
+      position: absolute; left: 14px; bottom: 24px; z-index: 500;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+      max-height: 48vh; overflow: auto;
+      backdrop-filter: blur(4px);
+    }
+    .map-legend .legend-title { margin-bottom: 5px; font-size: 12px; font-weight: 800; color: #1d2a23; }
+    .map-legend img { display: block; max-width: 190px; }
 
     /* PNG 미리보기 썸네일 */
     .preview { margin-top: 13px; }
@@ -730,6 +746,10 @@
 </head>
 <body>
   <div id="map"></div>
+  <div id="zoningLegend" class="map-legend" style="display:none">
+    <div class="legend-title">용도지역 범례</div>
+    <img id="zoningLegendImg" alt="용도지역 범례">
+  </div>
 
   <section class="bridge-panel" id="bridgePanel">
     <header class="panel-header">
@@ -758,11 +778,12 @@
 
         <div class="field">
           <label>지도 종류</label>
-          <div class="segmented seg4">
+          <div class="segmented seg5">
             <label><input class="mapType" type="radio" name="mapType" value="satellite" checked>위성</label>
             <label><input class="mapType" type="radio" name="mapType" value="street">일반</label>
             <label><input class="mapType" type="radio" name="mapType" value="blank">백지도</label>
             <label><input class="mapType" type="radio" name="mapType" value="cadastre">지적도</label>
+            <label><input class="mapType" type="radio" name="mapType" value="zoning">용도지역</label>
           </div>
         </div>
 
@@ -1087,10 +1108,12 @@
       opacity: 0.5,
       attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
     });
-    // 지적도 보기 라벨: 지명·도로명·주요시설 명칭(건물·배경 없는 투명 라벨 타일)을 선명하게.
+    // 지적도/용도지역 보기 라벨: 지명·도로명·주요시설 명칭(투명 라벨 타일)을 선명하게.
+    // refLabelPane(상위)에 올려 용도지역 색면·지적선 위에서도 명칭이 읽히도록 한다.
     const cadastreRefLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}.png", {
       maxZoom: 20,
       opacity: 0.95,
+      pane: "refLabelPane",
       attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
     });
 
@@ -1107,8 +1130,14 @@
       }
       return baseLayers.satellite;
     }
+    // 용도지역 색면 패널(베이스 위, 지적선 아래)
+    map.createPane("zoningPane");
+    map.getPane("zoningPane").style.zIndex = 250;
     map.createPane("cadastrePane");
     map.getPane("cadastrePane").style.zIndex = 420;
+    // 라벨 패널(용도지역 색면·지적선 위 → 명칭 가독성)
+    map.createPane("refLabelPane");
+    map.getPane("refLabelPane").style.zIndex = 430;
     // halo(어두운 외곽선)는 위성영상 위에서만 필요. 타일 로드마다 패널 전체를 재래스터화하는
     // 비용이 크므로 베이스맵에 따라 updateCadastreOverlay에서 조건부로만 적용한다.
     function setCadastreHalo(on) {
@@ -1119,6 +1148,7 @@
     map.createPane("selectedParcelPane");
     map.getPane("selectedParcelPane").style.zIndex = 620;
     let cadastreLayer = null;
+    let zoningLayer = null;
     const selectedParcelLayer = L.layerGroup([], { pane: "selectedParcelPane" }).addTo(map);
 
     const dotIcon = L.divIcon({
@@ -1213,8 +1243,8 @@
     }
 
     function serverMapType(mapType) {
-      // 서버 PNG는 지적선을 그리지 않으므로 '지적도' 보기는 백지도로 출력
-      return mapType === "cadastre" ? "blank" : mapType;
+      // 서버 PNG는 지적선·용도지역을 그리지 않으므로 '지적도'·'용도지역' 보기는 백지도로 출력
+      return (mapType === "cadastre" || mapType === "zoning") ? "blank" : mapType;
     }
 
     function mapUrl(data) {
@@ -1233,31 +1263,74 @@
     function updateBaseMap() {
       const mapType = document.querySelector(".mapType:checked").value;
       const cadastreView = mapType === "cadastre";
+      const zoningView = mapType === "zoning";
+      const lightThematic = cadastreView || zoningView; // 옅은 베이스+라벨을 공유하는 보기
       if (activeBaseLayer) {
         map.removeLayer(activeBaseLayer);
         activeBaseLayer = null;
       }
-      map.getContainer().classList.toggle("blank-map", mapType === "blank" || cadastreView);
-      map.getContainer().classList.toggle("cadastre-map", cadastreView);
-      // 지적도 보기: 옅은 도로·물길 참고 베이스 + 지명/도로명 라벨(건물은 흐릿하게만)
+      map.getContainer().classList.toggle("blank-map", mapType === "blank" || lightThematic);
+      map.getContainer().classList.toggle("cadastre-map", lightThematic);
+      // 지적도/용도지역 보기: 옅은 Positron 베이스 + 지명/도로명 라벨(건물은 흐릿하게만)
       const layer = mapType === "satellite" ? satelliteBaseLayer()
-        : cadastreView ? cadastreBaseLayer
+        : lightThematic ? cadastreBaseLayer
         : baseLayers[mapType];
       activeBaseLayer = layer ? layer.addTo(map) : null;
-      // 지적도일 때만 라벨 참조 레이어 추가, 그 외에는 제거
-      if (cadastreView) {
+      // 지적도/용도지역일 때만 라벨 참조 레이어 추가, 그 외에는 제거
+      if (lightThematic) {
         if (!map.hasLayer(cadastreRefLayer)) cadastreRefLayer.addTo(map);
       } else if (map.hasLayer(cadastreRefLayer)) {
         map.removeLayer(cadastreRefLayer);
       }
-      // 지적도 보기: 깨끗한 흰 배경 위에 지적선만 진하게 표시
+      // 지적도 보기: 옅은 회색 위에 지적선을 진하게 표시
       if (cadastreView && $("apiKey").value.trim()) {
         $("showCadastre").checked = true;
-      } else if (cadastreView) {
-        status("지적도 보기에는 VWorld API 키가 필요합니다.");
+      } else if (lightThematic && !$("apiKey").value.trim()) {
+        status((zoningView ? "용도지역" : "지적도") + " 보기에는 VWorld API 키가 필요합니다.");
       }
       if ($("showCadastre").checked) updateCadastreOverlay();
       else if (cadastreLayer) cadastreLayer.bringToFront();
+      updateZoningOverlay(); // 용도지역 색면(요청 시) 갱신
+    }
+
+    // 용도지역 색면 오버레이(VWorld WMS lt_c_uq111) — '용도지역' 지도 종류에서만 표시
+    function updateZoningOverlay() {
+      if (zoningLayer) {
+        map.removeLayer(zoningLayer);
+        zoningLayer = null;
+      }
+      const legendBox = $("zoningLegend");
+      const mapType = document.querySelector(".mapType:checked").value;
+      const apiKey = $("apiKey").value.trim();
+      if (mapType !== "zoning" || !apiKey) {
+        if (legendBox) legendBox.style.display = "none";
+        return; // 키 없음 안내는 updateBaseMap에서 처리
+      }
+      if (map.getZoom() < 13) status("용도지역은 조금 더 확대했을 때 표시됩니다(지도를 확대해 주세요).");
+      // 범례(GetLegendGraphic) — 로드 실패 시 범례 박스 숨김
+      const legendImg = $("zoningLegendImg");
+      if (legendImg && legendBox) {
+        legendImg.onload = () => { legendBox.style.display = "block"; };
+        legendImg.onerror = () => { legendBox.style.display = "none"; };
+        legendImg.src = "https://api.vworld.kr/req/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetLegendGraphic"
+          + "&FORMAT=image/png&LAYER=lt_c_uq111&STYLE=lt_c_uq111&key=" + encodeURIComponent(apiKey);
+      }
+      zoningLayer = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
+        layers: "lt_c_uq111",
+        styles: "lt_c_uq111",
+        format: "image/png",
+        transparent: true,
+        version: "1.3.0",
+        key: apiKey,
+        pane: "zoningPane",
+        opacity: 0.55,
+        attribution: "VWorld 용도지역",
+        updateWhenIdle: true,
+        updateWhenZooming: false,
+        keepBuffer: 2,
+        detectRetina: false,
+        minZoom: 13
+      }).addTo(map);
     }
 
     function updateCadastreOverlay() {
@@ -2102,11 +2175,13 @@
       input.addEventListener("input", () => {
         localStorage.setItem(`cadastre.${id}`, input.value);
         if (id === "apiKey" && $("showCadastre").checked) updateCadastreOverlay();
+        if (id === "apiKey" && document.querySelector(".mapType:checked").value === "zoning") updateZoningOverlay();
       });
     });
     // API 키 입력이 끝나면(블러/엔터) 위성 베이스를 VWorld로 전환해 지적선 정합을 맞춘다.
     $("apiKey").addEventListener("change", () => {
-      if (document.querySelector(".mapType:checked").value === "satellite") updateBaseMap();
+      const mt = document.querySelector(".mapType:checked").value;
+      if (mt === "satellite" || mt === "zoning" || mt === "cadastre") updateBaseMap();
     });
 
     updateBaseMap();
