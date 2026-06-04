@@ -1079,8 +1079,14 @@
     };
     let activeBaseLayer = baseLayers.satellite.addTo(map);
 
-    // 지적도 보기 참조 레이어: 흰 배경 위에 '지명·도로명 라벨'(건물·배경 없는 투명 라벨 타일).
-    // 도로 형태 자체는 연속지적의 '도로 필지' 외곽선으로 표시되고, 여기에 명칭을 더해 방위를 돕는다.
+    // 지적도 보기 참조 베이스: 도로 면·물길을 '옅게' 깐다(Voyager nolabels, 낮은 투명도).
+    // Voyager는 도로가 색으로 그려져 옅게 깔아도 도로/물이 보이고, 건물(베이지)은 흐릿하게만 비친다.
+    const cadastreBaseLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png", {
+      maxZoom: 20,
+      opacity: 0.6,
+      attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
+    });
+    // 지적도 보기 라벨: 지명·도로명·주요시설 명칭(건물·배경 없는 투명 라벨 타일)을 선명하게.
     const cadastreRefLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}.png", {
       maxZoom: 20,
       opacity: 0.95,
@@ -1232,9 +1238,9 @@
       }
       map.getContainer().classList.toggle("blank-map", mapType === "blank" || cadastreView);
       map.getContainer().classList.toggle("cadastre-map", cadastreView);
-      // 지적도 보기: 베이스 타일(건물 등)은 깔지 않되, 위치 기준(지명·도로명 라벨)은 표시
+      // 지적도 보기: 옅은 도로·물길 참고 베이스 + 지명/도로명 라벨(건물은 흐릿하게만)
       const layer = mapType === "satellite" ? satelliteBaseLayer()
-        : cadastreView ? null
+        : cadastreView ? cadastreBaseLayer
         : baseLayers[mapType];
       activeBaseLayer = layer ? layer.addTo(map) : null;
       // 지적도일 때만 라벨 참조 레이어 추가, 그 외에는 제거
