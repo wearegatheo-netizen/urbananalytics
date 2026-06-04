@@ -16,6 +16,9 @@
       --field-bd: #c2cbc4;
       --accent: #1b4f9c;
       --accent-d: #163f7d;
+      --brand: #2563c9;
+      --brand-d: #1b4f9c;
+      --brand-deep: #14306b;
       --green: #1f7a4d;
       --green-d: #185f3c;
       --red: #e60012;
@@ -65,29 +68,36 @@
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 13px 16px;
-      background: linear-gradient(180deg, #ffffff, #f3f6f3);
-      border-bottom: 1px solid var(--line);
+      padding: 14px 16px;
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-d) 55%, var(--brand-deep) 100%);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+      box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.08);
       flex: 0 0 auto;
     }
 
     .panel-title {
       display: flex;
       align-items: center;
-      gap: 9px;
+      gap: 10px;
       margin: 0;
       font-size: 16px;
       font-weight: 800;
       letter-spacing: -0.2px;
-      color: #16271e;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
     }
 
     .panel-title .dot {
-      width: 11px;
-      height: 11px;
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
-      background: var(--red);
-      box-shadow: 0 0 0 4px rgba(230, 0, 18, 0.18);
+      background: #4ade80;
+      box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.30), 0 0 8px rgba(74, 222, 128, 0.7);
+      animation: livePulse 2.4s ease-in-out infinite;
+    }
+    @keyframes livePulse {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.30), 0 0 8px rgba(74, 222, 128, 0.6); }
+      50% { box-shadow: 0 0 0 5px rgba(74, 222, 128, 0.12), 0 0 12px rgba(74, 222, 128, 0.9); }
     }
 
     .panel-toggle {
@@ -95,16 +105,16 @@
       height: 30px;
       display: grid;
       place-items: center;
-      border: 1px solid var(--line-strong);
+      border: 1px solid rgba(255, 255, 255, 0.35);
       border-radius: 8px;
-      background: #fff;
-      color: #455;
+      background: rgba(255, 255, 255, 0.16);
+      color: #fff;
       font-size: 14px;
       cursor: pointer;
-      transition: background 0.15s, border-color 0.15s;
+      transition: background 0.15s, border-color 0.15s, transform 0.15s;
     }
 
-    .panel-toggle:hover { background: var(--soft); border-color: var(--accent); color: var(--accent); }
+    .panel-toggle:hover { background: rgba(255, 255, 255, 0.30); border-color: rgba(255, 255, 255, 0.6); }
 
     .panel-body {
       padding: 14px 16px 16px;
@@ -116,19 +126,31 @@
     .bridge-panel.collapsed .panel-body { display: none; }
 
     .status {
+      position: relative;
       margin: 0 0 13px;
-      padding: 11px 12px;
+      padding: 11px 12px 11px 34px;
       color: #143b27;
-      background: var(--soft);
+      background: linear-gradient(180deg, #f6faf7, #eef5f0);
       border: 1px solid #d4e0d7;
       border-left: 4px solid var(--green);
       border-radius: var(--radius-sm);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
       font-size: 12.5px;
       line-height: 1.5;
       white-space: pre-wrap;
       min-height: 48px;
       max-height: 132px;
       overflow: auto;
+    }
+    .status::before {
+      content: "ℹ";
+      position: absolute;
+      left: 11px; top: 11px;
+      width: 16px; height: 16px;
+      display: grid; place-items: center;
+      border-radius: 50%;
+      background: var(--green); color: #fff;
+      font-size: 11px; font-weight: 800;
     }
 
     .card {
@@ -140,28 +162,49 @@
     }
 
     .card.primary {
-      padding: 14px;
+      position: relative;
+      padding: 16px 14px 14px;
       border-color: var(--line-strong);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+      border-top: 3px solid transparent;
+      background:
+        linear-gradient(#fff, #fff) padding-box,
+        linear-gradient(90deg, var(--brand), var(--brand-deep)) border-box;
+      box-shadow: 0 4px 14px rgba(20, 48, 107, 0.08);
     }
+    .card:hover { border-color: var(--line-strong); }
 
     details.card > summary {
       list-style: none;
       cursor: pointer;
+      position: relative;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 12px 14px;
+      gap: 9px;
+      padding: 12px 14px 12px 16px;
       font-size: 13.5px;
       font-weight: 800;
       color: #1d2a23;
       background: linear-gradient(180deg, #fbfdfb, #f4f7f4);
       user-select: none;
+      transition: background 0.15s, color 0.15s;
     }
-
+    /* 좌측 브랜드 악센트 바 */
+    details.card > summary::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 50%;
+      transform: translateY(-50%);
+      width: 3px; height: 16px;
+      border-radius: 0 3px 3px 0;
+      background: var(--line-strong);
+      transition: height 0.18s ease, background 0.18s ease;
+    }
+    details.card[open] > summary::before { height: 30px; background: linear-gradient(180deg, var(--brand), var(--brand-deep)); }
+    .summary-ico { font-size: 14px; line-height: 1; filter: grayscale(0.15); }
+    .summary-title { flex: 1 1 auto; }
     details.card > summary::-webkit-details-marker { display: none; }
     details.card > summary:hover { background: #eef3ee; }
-    details.card[open] > summary { border-bottom: 1px solid var(--line); }
+    details.card[open] > summary { border-bottom: 1px solid var(--line); color: var(--brand-deep); }
 
     .chev {
       color: var(--muted);
@@ -267,25 +310,27 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      gap: 6px;
       height: 40px;
       padding: 4px 10px;
       color: #fff;
-      background: var(--accent);
+      background: linear-gradient(180deg, var(--brand), var(--brand-d));
       border: 0;
       border-radius: var(--radius-sm);
       font: inherit;
       font-size: 13.5px;
       font-weight: 800;
       cursor: pointer;
-      transition: background 0.15s, transform 0.05s;
+      box-shadow: 0 2px 6px rgba(27, 79, 156, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+      transition: filter 0.15s, transform 0.06s, box-shadow 0.15s;
     }
-    .actions button:hover { background: var(--accent-d); }
-    .actions button:active { transform: translateY(1px); }
-    .actions button.download { background: var(--green); }
-    .actions button.download:hover { background: var(--green-d); }
-    .actions button.wide { grid-column: 1 / -1; background: var(--red); }
-    .actions button.wide:hover { background: var(--red-d); }
-    .actions button:disabled { background: #9aa19a; cursor: wait; }
+    .actions button:hover { filter: brightness(1.07); box-shadow: 0 4px 12px rgba(27, 79, 156, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+    .actions button:active { transform: translateY(1px); box-shadow: 0 1px 3px rgba(27, 79, 156, 0.3); }
+    .actions button.download { background: linear-gradient(180deg, #25925f, var(--green)); box-shadow: 0 2px 6px rgba(31, 122, 77, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+    .actions button.download:hover { filter: brightness(1.07); }
+    .actions button.wide { grid-column: 1 / -1; background: linear-gradient(180deg, #f0303f, var(--red)); box-shadow: 0 2px 6px rgba(230, 0, 18, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+    .actions button.wide:hover { filter: brightness(1.05); }
+    .actions button:disabled { background: #9aa19a; box-shadow: none; cursor: wait; filter: none; }
 
     .hint {
       margin: 9px 0 0;
@@ -316,15 +361,16 @@
       cursor: pointer;
       transition: background 0.15s, border-color 0.15s, color 0.15s;
     }
-    .segmented label:hover { border-color: var(--accent); }
+    .segmented label:hover { border-color: var(--brand); background: #eef3fb; }
     .segmented label:has(input:checked) {
-      background: #eaf1fb;
-      border-color: var(--accent);
-      color: var(--accent-d);
-      box-shadow: var(--ring);
+      background: linear-gradient(180deg, var(--brand), var(--brand-d));
+      border-color: var(--brand-d);
+      color: #fff;
+      box-shadow: 0 2px 7px rgba(27, 79, 156, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.18);
     }
 
-    .segmented input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+    .segmented input { width: 14px; height: 14px; margin: 0; accent-color: #fff; }
+    .segmented label:has(input:checked) input { accent-color: #fff; }
     .segmented.seg4 { grid-template-columns: repeat(4, 1fr); gap: 5px; }
     .segmented.seg4 label { gap: 3px; padding: 5px 2px; font-size: 12px; }
     .segmented.seg2 { grid-template-columns: repeat(2, 1fr); }
@@ -733,7 +779,7 @@
       </div>
 
       <details class="card" id="cardAuth" open>
-        <summary>브이월드 인증<span class="chev">▾</span></summary>
+        <summary><span class="summary-ico">🔑</span><span class="summary-title">브이월드 인증</span><span class="chev">▾</span></summary>
         <div class="card-body">
           <div class="row">
             <div class="field">
@@ -768,7 +814,7 @@
       </details>
 
       <details class="card" id="cardCadastre">
-        <summary>연속지적 실행<span class="chev">▾</span></summary>
+        <summary><span class="summary-ico">🗺️</span><span class="summary-title">연속지적 실행</span><span class="chev">▾</span></summary>
         <div class="card-body">
           <div class="row">
             <div class="field">
@@ -819,7 +865,7 @@
       </details>
 
       <details class="card" id="cardDxf">
-        <summary>연속지적 DXF 내려받기<span class="chev">▾</span></summary>
+        <summary><span class="summary-ico">📐</span><span class="summary-title">연속지적 DXF 내려받기</span><span class="chev">▾</span></summary>
         <div class="card-body">
           <p class="hint">입력한 주소 반경 내 연속지적(필지 경계)+용도지역을 VWorld에서 모아 <b>CAD용 DXF</b>(EPSG:5186 좌표)로 내려받습니다. QGIS 없이 웹에서 동작합니다. (지적도 데이터에는 VWorld API 키 필요)</p>
           <div class="grid-2">
@@ -836,7 +882,7 @@
       </details>
 
       <details class="card" id="cardHeight">
-        <summary>블록별 평균높이 산정<span class="chev">▾</span></summary>
+        <summary><span class="summary-ico">🏢</span><span class="summary-title">블록별 평균높이 산정</span><span class="chev">▾</span></summary>
         <div class="card-body">
           <p class="hint">필지를 고르는 방법을 선택하세요. 건폐율·도로폭·필지깊이는 자동 산정되며, 아래 설정으로 덮어쓸 수 있습니다.</p>
 
