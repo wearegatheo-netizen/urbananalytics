@@ -449,21 +449,33 @@
     .pick-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
     .pick-tools .small-button { flex: 1 1 auto; }
 
-    .lot-setback-editor { display: flex; flex-direction: column; gap: 5px; }
-    .lot-sb-row { display: flex; align-items: center; gap: 6px; }
-    .lot-sb-row .lot-sb-name {
-      flex: 1 1 auto; min-width: 0; font-size: 12.5px; white-space: nowrap;
-      overflow: hidden; text-overflow: ellipsis;
+    .lot-setback-editor { display: flex; flex-direction: column; gap: 7px; }
+    .lot-row {
+      display: flex; flex-direction: column; gap: 5px;
+      padding: 7px 8px; background: var(--soft);
+      border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
     }
-    .lot-sb-row .lot-sb-badge {
+    .lot-row-name {
+      font-size: 12.5px; font-weight: 700; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lot-sb-badge {
       display: inline-block; padding: 1px 6px; border-radius: 7px; margin-right: 5px;
       font-size: 11px; font-weight: 800; color: #fff; vertical-align: 1px;
     }
-    .lot-sb-row input {
-      width: 56px; height: 30px; padding: 2px 6px; text-align: right;
-      border: 1px solid var(--line); border-radius: var(--radius-sm); font: inherit; font-size: 12.5px;
+    .lot-row-fields { display: flex; align-items: center; gap: 6px; }
+    .lot-row-fields .fl { display: inline-flex; align-items: center; gap: 3px; }
+    .lot-row-fields .fl-cap { font-size: 11px; color: var(--muted); font-weight: 700; }
+    .lot-row-fields input {
+      width: 50px; height: 30px; padding: 2px 6px; text-align: right;
+      border: 1px solid var(--field-bd); border-radius: var(--radius-sm); font: inherit; font-size: 12.5px;
+      background: #fff;
     }
-    .lot-sb-row .sep { color: #999; font-size: 12px; }
+    .lot-row-fields .js-lot-zone {
+      flex: 1 1 auto; min-width: 0; height: 30px; padding: 2px 6px;
+      border: 1px solid var(--field-bd); border-radius: var(--radius-sm); font: inherit; font-size: 12px;
+      background: #fff;
+    }
 
     .small-button {
       height: 34px;
@@ -849,9 +861,9 @@
               <p class="hint">여러 필지를 체크한 뒤 ‘획지로 묶기’를 누르면, 합쳐진 경계 기준(면적 합·접도길이·깊이)으로 평균높이를 산정합니다.</p>
             </div>
             <div class="field" id="lotSetbackBlock" style="display:none">
-              <label>획지별 건축선후퇴(m) — 전면 / 후면</label>
+              <label>획지별 건축선후퇴 · 용도지역 상향</label>
               <div id="lotSetbackEditor" class="lot-setback-editor"></div>
-              <p class="hint">비워두면 아래 설정의 전역 기본 후퇴값을 사용합니다.</p>
+              <p class="hint">전(전면)·후(후면) 후퇴는 비우면 전역 기본값을 사용합니다. ‘용도지역 상향’을 지정하면 그 획지의 건폐율·최고높이 상한을 상향 용도지역 기준으로 산정합니다.</p>
             </div>
           </div>
 
@@ -1028,9 +1040,13 @@
     }
     map.createPane("cadastrePane");
     map.getPane("cadastrePane").style.zIndex = 420;
-    // 지적선(얇은 노란선)이 위성영상 위에서도 또렷하도록 어두운 외곽선(halo) 부여
-    map.getPane("cadastrePane").style.filter =
-      "drop-shadow(0 0 1px rgba(0,0,0,0.95)) drop-shadow(0 0 1px rgba(0,0,0,0.95))";
+    // halo(어두운 외곽선)는 위성영상 위에서만 필요. 타일 로드마다 패널 전체를 재래스터화하는
+    // 비용이 크므로 베이스맵에 따라 updateCadastreOverlay에서 조건부로만 적용한다.
+    function setCadastreHalo(on) {
+      const pane = map.getPane("cadastrePane");
+      if (!pane) return;
+      pane.style.filter = on ? "drop-shadow(0 0 0.6px rgba(0,0,0,0.95))" : "";
+    }
     map.createPane("selectedParcelPane");
     map.getPane("selectedParcelPane").style.zIndex = 620;
     let cadastreLayer = null;
@@ -1066,6 +1082,7 @@
     let nextGroupId = 1;            // 각 필지는 처음엔 단독 획지
     const pickSelection = new Set(); // 묶기용으로 체크된 필지 인덱스
     const lotSetbacks = {};          // 획지(group)별 건축선후퇴 { group: {front, rear} }
+    const lotZones = {};             // 획지(group)별 용도지역 상향 { group: "준주거지역" }
     let pickingBusy = false;         // 클릭 처리 중복 방지(연속 클릭 시 버스트 차단 회피)
     let lastHeightRows = [];
     let lastHeightTotals = null;
@@ -1172,14 +1189,17 @@
         map.removeLayer(cadastreLayer);
         cadastreLayer = null;
       }
-      if (!checkbox.checked) return;
+      if (!checkbox.checked) { setCadastreHalo(false); return; }
       const apiKey = $("apiKey").value.trim();
       if (!apiKey) {
         checkbox.checked = false;
         status("지적도를 표시하려면 VWorld API 키가 필요합니다.");
         return;
       }
-      const cadastreView = document.querySelector(".mapType:checked").value === "cadastre";
+      const mapType = document.querySelector(".mapType:checked").value;
+      const cadastreView = mapType === "cadastre";
+      // halo는 위성지도 위에서만(얇은 선 가독성). 백지도/지적도/일반지도에서는 끔 → 재래스터화 비용 제거
+      setCadastreHalo(mapType === "satellite");
       const commonOptions = {
         format: "image/png",
         transparent: true,
@@ -1187,8 +1207,19 @@
         key: apiKey,
         pane: "cadastrePane",
         opacity: cadastreView ? 1.0 : 0.95,
-        attribution: "VWorld cadastral"
+        attribution: "VWorld cadastral",
+        // 성능: 팬/줌 중에는 타일을 받지 않고 멈춘 뒤 한 번에 로드(WMS 요청·재래스터화 폭주 방지)
+        updateWhenIdle: true,
+        updateWhenZooming: false,
+        keepBuffer: 2,
+        detectRetina: false,
+        // 필지선이 의미있는 줌에서만 로드 → 광역(시 단위)에서의 대량 타일 요청 차단.
+        // '위치도 보기'가 줌 14로 이동하므로 14를 하한으로 둔다.
+        minZoom: 14
       };
+      if (map.getZoom() < 14) {
+        status("지적선은 더 확대했을 때 표시됩니다(지도를 확대해 주세요).");
+      }
       cadastreLayer = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
         ...commonOptions,
         layers: "lp_pa_cbnd_bonbun,lp_pa_cbnd_bubun",
@@ -1263,7 +1294,13 @@
       renderSetbackEditor(groupMembers, hoekjiOrder);
     }
 
-    // 획지(group)별 건축선후퇴 입력 — 평균높이 카드에만 표시
+    // 획지별 용도지역 상향 선택지(건폐율·최고높이 상한 산정에 반영)
+    const ZONE_UPGRADE_OPTIONS = [
+      "제2종일반주거지역", "제3종일반주거지역", "준주거지역",
+      "준공업지역", "근린상업지역", "일반상업지역"
+    ];
+
+    // 획지(group)별 건축선후퇴 + 용도지역 상향 입력 — 평균높이 카드에만 표시
     function renderSetbackEditor(groupMembers, hoekjiOrder) {
       const block = $("lotSetbackBlock");
       const editor = $("lotSetbackEditor");
@@ -1271,6 +1308,7 @@
       // 현재 선택에 존재하는 group만 유지(삭제된 group의 입력값 정리)
       const liveGroups = new Set(pickedParcels.map((it) => it.group));
       Object.keys(lotSetbacks).forEach((g) => { if (!liveGroups.has(Number(g)) && !liveGroups.has(g)) delete lotSetbacks[g]; });
+      Object.keys(lotZones).forEach((g) => { if (!liveGroups.has(Number(g)) && !liveGroups.has(g)) delete lotZones[g]; });
       if (!pickedParcels.length) { block.style.display = "none"; editor.innerHTML = ""; return; }
       block.style.display = "block";
       const seen = new Set();
@@ -1285,12 +1323,18 @@
           ? `<span class="lot-sb-badge" style="background:${hoekjiColor((hNo - 1) % 6)}">획지 ${hNo}</span>${groupMembers[item.group]}필지`
           : `${escapeHtml(dong)} ${escapeHtml(rest)}`;
         const sb = lotSetbacks[item.group] || {};
+        const zv = lotZones[item.group] || "";
+        const opts = ['<option value="">용도지역 자동(상향 없음)</option>']
+          .concat(ZONE_UPGRADE_OPTIONS.map((z) => `<option value="${z}"${z === zv ? " selected" : ""}>↑ ${z}</option>`))
+          .join("");
         rows.push(
-          `<div class="lot-sb-row">`
-          + `<span class="lot-sb-name" title="${escapeHtml(item.parcel || "")}">${label}</span>`
-          + `<input type="number" min="0" step="0.1" class="js-lot-sb" data-group="${item.group}" data-kind="front" placeholder="전면" value="${sb.front != null ? sb.front : ""}">`
-          + `<span class="sep">/</span>`
-          + `<input type="number" min="0" step="0.1" class="js-lot-sb" data-group="${item.group}" data-kind="rear" placeholder="후면" value="${sb.rear != null ? sb.rear : ""}">`
+          `<div class="lot-row">`
+          + `<div class="lot-row-name" title="${escapeHtml(item.parcel || "")}">${label}</div>`
+          + `<div class="lot-row-fields">`
+          +   `<span class="fl"><span class="fl-cap">전</span><input type="number" min="0" step="0.1" class="js-lot-sb" data-group="${item.group}" data-kind="front" placeholder="m" value="${sb.front != null ? sb.front : ""}"></span>`
+          +   `<span class="fl"><span class="fl-cap">후</span><input type="number" min="0" step="0.1" class="js-lot-sb" data-group="${item.group}" data-kind="rear" placeholder="m" value="${sb.rear != null ? sb.rear : ""}"></span>`
+          +   `<select class="js-lot-zone" data-group="${item.group}" title="획지 용도지역 상향">${opts}</select>`
+          + `</div>`
           + `</div>`
         );
       });
@@ -1303,6 +1347,13 @@
           if (!lotSetbacks[g]) lotSetbacks[g] = {};
           if (v === "") delete lotSetbacks[g][kind]; else lotSetbacks[g][kind] = Number(v);
           if (lotSetbacks[g].front == null && lotSetbacks[g].rear == null) delete lotSetbacks[g];
+        });
+      });
+      editor.querySelectorAll(".js-lot-zone").forEach((sel) => {
+        sel.addEventListener("change", (e) => {
+          const g = e.target.dataset.group;
+          const v = e.target.value;
+          if (v) lotZones[g] = v; else delete lotZones[g];
         });
       });
     }
@@ -1651,7 +1702,7 @@
       $("heightResultBody").innerHTML = lastHeightRows.map((row) => `
         <tr title="${escapeHtml(row.method || "")}">
           <td title="${escapeHtml(row.members || row.parcel || "")}">${escapeHtml(row.parcel || "")}</td>
-          <td>${escapeHtml(row.zone || "-")}</td>
+          <td${row.zoneUpgraded ? ' style="color:#1f7a4d;font-weight:700" title="' + escapeHtml((row.zoneAuto || "-") + " → " + (row.zone || "-") + " 상향") + '"' : ""}>${escapeHtml(row.zone || "-")}${row.zoneUpgraded ? " ↑" : ""}</td>
           <td>${numberText(row.area, 2)}</td>
           <td title="${escapeHtml(row.coverageSource || "")}">${numberText(row.coverageRatio, 2)}%</td>
           <td>${numberText(row.floorArea, 2)}</td>
@@ -1725,6 +1776,7 @@
           setbackFront: $("heightSetbackFront").value.trim(),
           setbackRear: $("heightSetbackRear").value.trim(),
           lotSetbacks: lotSetbacks,
+          lotZoneOverride: lotZones,
           centerRank: $("centerRank").value,
           centerAdjustPct: $("centerAdjustPct").value.trim(),
           reviewNote: $("heightReviewNote").value.trim()

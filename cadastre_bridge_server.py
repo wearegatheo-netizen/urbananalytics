@@ -1016,6 +1016,8 @@ def analyze_selected_parcels(payload):
     manual_rear = parse_float(payload.get("setbackRear"), None)  # 전역 기본 후면건축선후퇴(m)
     # 획지(group)별 건축선후퇴: { "<group>": {"front": x, "rear": y} }
     lot_setbacks = payload.get("lotSetbacks") or {}
+    # 획지(group)별 용도지역 상향: { "<group>": "준주거지역" }
+    lot_zones = payload.get("lotZoneOverride") or {}
     # 중심지 위계 조정(①): 위계 + 조정%
     center_rank = str(payload.get("centerRank") or "").strip()
     center_pct = clamp_center_pct(center_rank, parse_float(payload.get("centerAdjustPct"), 0.0))
@@ -1064,8 +1066,13 @@ def analyze_selected_parcels(payload):
 
         # 용도지역 자동판별(획지 중심)
         landuse = get_landuse(c_lat, c_lon, api_key) or {}
-        zone = landuse.get("zone")
+        zone_auto = landuse.get("zone")
         sigungu = landuse.get("sigungu")
+
+        # 획지별 용도지역 상향(지구단위계획 등): 지정 시 건폐율·최고높이 상한을 상향 용도로 산정
+        zone_ov = str(lot_zones.get(str(grp_key)) or lot_zones.get(grp_key) or "").strip()
+        zone_upgraded = bool(zone_ov and zone_ov != (zone_auto or ""))
+        zone = zone_ov if zone_ov else zone_auto
 
         # 건폐율: 지구단위계획(입력) > 조례(입력/법제처) > 시행령 상한 > 없음
         coverage = None
@@ -1149,6 +1156,8 @@ def analyze_selected_parcels(payload):
                 "members": ", ".join(member_parcels),
                 "isHoekji": is_hoekji,
                 "zone": zone or "-",
+                "zoneAuto": zone_auto or "-",
+                "zoneUpgraded": zone_upgraded,
                 "area": round(area, 3),
                 "frontSetback": round(front_setback, 3),
                 "rearSetback": round(rear_setback, 3),
@@ -2095,6 +2104,8 @@ def build_height_report_xlsx(payload):
         ws.cell(row=rr, column=15, value=row.get("confidence") or "")
 
         checks = []
+        if row.get("zoneUpgraded"):
+            checks.append(f"용도지역 상향 {row.get('zoneAuto') or '-'}→{row.get('zone') or '-'}(건폐율·최고높이 상한 상향 적용)")
         if fsb > 0 or rsb > 0:
             checks.append(f"건축선후퇴 전면{_fmt_num(fsb)}/후면{_fmt_num(rsb)}m(기준거리=도로폭+전면후퇴, 깊이는 후면후퇴 차감)")
         if area is not None and cov is not None:
