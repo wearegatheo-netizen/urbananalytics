@@ -229,8 +229,9 @@
       color: #3a463f;
     }
 
-    .field input {
+    .field input, .field select {
       width: 100%;
+      height: 40px;
       padding: 9px 11px;
       color: var(--ink);
       background: var(--field-bg);
@@ -240,9 +241,10 @@
       font-size: 14px;
       transition: border-color 0.15s, box-shadow 0.15s;
     }
+    .field select { padding: 8px 10px; cursor: pointer; }
 
     .field input::placeholder { color: #9aa69e; }
-    .field input:focus {
+    .field input:focus, .field select:focus {
       outline: none;
       border-color: var(--accent);
       box-shadow: var(--ring);
@@ -279,7 +281,7 @@
     }
 
     .folder-row button {
-      height: 38px;
+      height: 40px;
       border: 0;
       border-radius: var(--radius-sm);
       color: #fff;
@@ -331,6 +333,7 @@
     .actions button.wide { grid-column: 1 / -1; background: linear-gradient(180deg, #f0303f, var(--red)); box-shadow: 0 2px 6px rgba(230, 0, 18, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.18); }
     .actions button.wide:hover { filter: brightness(1.05); }
     .actions button:disabled { background: #9aa19a; box-shadow: none; cursor: wait; filter: none; }
+    .actions button[hidden] { display: none; }
 
     .hint {
       margin: 9px 0 0;
@@ -375,6 +378,7 @@
     .segmented.seg4 label { gap: 3px; padding: 5px 2px; font-size: 12px; }
     .segmented.seg2 { grid-template-columns: repeat(2, 1fr); }
     .segmented.seg2 label { min-height: 40px; font-size: 13px; }
+    #heightModeToggle { margin: 12px 0 2px; }
 
     /* 카드 내부 접이식 설정 그룹 */
     .mode-panel { margin-top: 2px; }
@@ -396,8 +400,9 @@
     .subcard > summary:hover { background: #eef3ee; }
     .subcard[open] > summary { border-bottom: 1px solid var(--line); }
     .subcard[open] > summary .chev { transform: rotate(180deg); }
-    .subcard-body { padding: 11px; }
-    .subcard-body > *:first-child { margin-top: 0; }
+    /* 균일한 세로 리듬: 모든 자식 간 11px 간격(개별 margin은 0으로 통일) */
+    .subcard-body { padding: 11px; display: flex; flex-direction: column; gap: 11px; }
+    .subcard-body > * { margin: 0 !important; }
     .muted-note { color: var(--muted); font-weight: 600; font-size: 11px; }
     .opt-badge {
       display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
@@ -492,8 +497,9 @@
     .pick-item.in-hoekji[data-h="3"] { border-left-color: #8e44ad; } .hoekji-tag[data-h="3"] { background: #8e44ad; }
     .pick-item.in-hoekji[data-h="4"] { border-left-color: #c0392b; } .hoekji-tag[data-h="4"] { background: #c0392b; }
     .pick-item.in-hoekji[data-h="5"] { border-left-color: #16805a; } .hoekji-tag[data-h="5"] { background: #16805a; }
-    .pick-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
-    .pick-tools .small-button { flex: 1 1 auto; }
+    .pick-tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+    .pick-tools .small-button { width: 100%; padding-left: 4px; padding-right: 4px; }
+    .pick-tools .js-clear-picks { grid-column: 1 / -1; }
 
     .lot-setback-editor { display: flex; flex-direction: column; gap: 7px; }
     .lot-row {
@@ -900,7 +906,7 @@
               <div class="parcel-list js-parcel-list"></div>
               <div class="pick-tools">
                 <button class="small-button ghost js-select-all" type="button">전체 선택</button>
-                <button class="small-button ghost js-group-parcels" type="button">선택 → 획지로 묶기</button>
+                <button class="small-button ghost js-group-parcels" type="button">획지로 묶기</button>
                 <button class="small-button ghost js-ungroup-parcels" type="button">묶음 해제</button>
                 <button class="small-button js-clear-picks" type="button">전체 지우기</button>
               </div>
@@ -947,7 +953,7 @@
                   <input id="districtPlanCoverage" type="number" min="0" step="1" placeholder="우선 적용">
                 </div>
               </div>
-              <div class="grid-2" style="margin-top:11px">
+              <div class="grid-2">
                 <div class="field">
                   <label for="heightSetbackFront">전면 건축선후퇴(m)</label>
                   <input id="heightSetbackFront" type="number" min="0" step="0.1" placeholder="도로사선에 가산">
@@ -958,7 +964,7 @@
                 </div>
               </div>
               <p class="hint">전면/후면 후퇴는 전역 기본값입니다. 획지별로 다르게 적용하려면 지도 선택 목록의 ‘획지별 건축선후퇴’를 사용하세요.</p>
-              <div class="grid-2" style="margin-top:11px">
+              <div class="grid-2">
                 <div class="field">
                   <label for="heightSlopeMultiplier">사선 계수(1.5D)</label>
                   <input id="heightSlopeMultiplier" type="number" min="0" step="0.1" value="1.5">
