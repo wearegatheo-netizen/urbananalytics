@@ -1079,6 +1079,14 @@
     };
     let activeBaseLayer = baseLayers.satellite.addTo(map);
 
+    // 지적도 보기 참조 레이어: 흰 배경 위에 '지명·도로명 라벨'(건물·배경 없는 투명 라벨 타일).
+    // 도로 형태 자체는 연속지적의 '도로 필지' 외곽선으로 표시되고, 여기에 명칭을 더해 방위를 돕는다.
+    const cadastreRefLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}.png", {
+      maxZoom: 20,
+      opacity: 0.95,
+      attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
+    });
+
     // 위성 베이스: VWorld API 키가 있으면 VWorld 위성영상을 사용한다.
     // 연속지적도와 동일한 국가 좌표계 기준이라 지적선이 영상과 정합한다.
     // 키가 없으면 Esri 위성영상으로 대체하지만, 한국 지적과 수 m 오차가 생길 수 있다.
@@ -1224,11 +1232,17 @@
       }
       map.getContainer().classList.toggle("blank-map", mapType === "blank" || cadastreView);
       map.getContainer().classList.toggle("cadastre-map", cadastreView);
-      // 지적도 보기: 베이스 타일을 깔지 않고 '흰 배경 + 지적선'만 표시(건물/도로 등 구조물 제거)
+      // 지적도 보기: 베이스 타일(건물 등)은 깔지 않되, 위치 기준(지명·도로명 라벨)은 표시
       const layer = mapType === "satellite" ? satelliteBaseLayer()
         : cadastreView ? null
         : baseLayers[mapType];
       activeBaseLayer = layer ? layer.addTo(map) : null;
+      // 지적도일 때만 라벨 참조 레이어 추가, 그 외에는 제거
+      if (cadastreView) {
+        if (!map.hasLayer(cadastreRefLayer)) cadastreRefLayer.addTo(map);
+      } else if (map.hasLayer(cadastreRefLayer)) {
+        map.removeLayer(cadastreRefLayer);
+      }
       // 지적도 보기: 깨끗한 흰 배경 위에 지적선만 진하게 표시
       if (cadastreView && $("apiKey").value.trim()) {
         $("showCadastre").checked = true;
