@@ -483,13 +483,6 @@
 
     #calculateBlockHeight, #analyzeSelectedParcels { width: 100%; }
 
-    .height-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 9px;
-      margin-bottom: 11px;
-      align-items: end;
-    }
 
     .result-summary {
       display: grid;
@@ -642,8 +635,8 @@
     .actions button, .small-button { white-space: nowrap; }
     .field label { line-height: 1.3; }
     /* 그리드 행 안의 칸은 하단 마진을 0으로 통일 → align-items:end로 입력칸 완벽 정렬
-       (행 간격은 .height-grid/.grid-2/.row 컨테이너의 margin/gap이 담당) */
-    .height-grid .field, .grid-2 .field, .row .field { margin-bottom: 0; }
+       (행 간격은 .grid-2/.row 컨테이너의 margin/gap이 담당) */
+    .grid-2 .field, .row .field { margin-bottom: 0; }
     .row { margin-bottom: 11px; }
 
     /* custom scrollbars inside the panel */
