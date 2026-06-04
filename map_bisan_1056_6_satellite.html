@@ -376,9 +376,6 @@
     .segmented label:has(input:checked) input { accent-color: #fff; }
     .segmented.seg4 { grid-template-columns: repeat(4, 1fr); gap: 5px; }
     .segmented.seg4 label { gap: 3px; padding: 5px 2px; font-size: 12px; }
-    .segmented.seg5 { grid-template-columns: repeat(5, 1fr); gap: 4px; }
-    .segmented.seg5 label { flex-direction: column; gap: 3px; padding: 6px 1px; font-size: 11px; min-height: 42px; }
-    .segmented.seg5 input { width: 13px; height: 13px; }
     .segmented.seg2 { grid-template-columns: repeat(2, 1fr); }
     .segmented.seg2 label { min-height: 40px; font-size: 13px; }
     #heightModeToggle { margin: 12px 0 2px; }
@@ -778,11 +775,10 @@
 
         <div class="field">
           <label>지도 종류</label>
-          <div class="segmented seg5">
+          <div class="segmented seg4">
             <label><input class="mapType" type="radio" name="mapType" value="satellite" checked>위성</label>
             <label><input class="mapType" type="radio" name="mapType" value="street">일반</label>
             <label><input class="mapType" type="radio" name="mapType" value="blank">백지도</label>
-            <label><input class="mapType" type="radio" name="mapType" value="cadastre">지적도</label>
             <label><input class="mapType" type="radio" name="mapType" value="zoning">용도지역</label>
           </div>
         </div>
@@ -1262,35 +1258,33 @@
 
     function updateBaseMap() {
       const mapType = document.querySelector(".mapType:checked").value;
-      const cadastreView = mapType === "cadastre";
       const zoningView = mapType === "zoning";
-      const lightThematic = cadastreView || zoningView; // 옅은 베이스+라벨을 공유하는 보기
       if (activeBaseLayer) {
         map.removeLayer(activeBaseLayer);
         activeBaseLayer = null;
       }
-      map.getContainer().classList.toggle("blank-map", mapType === "blank" || lightThematic);
-      map.getContainer().classList.toggle("cadastre-map", lightThematic);
-      // 지적도/용도지역 보기: 옅은 Positron 베이스 + 지명/도로명 라벨(건물은 흐릿하게만)
+      map.getContainer().classList.toggle("blank-map", mapType === "blank" || zoningView);
+      map.getContainer().classList.toggle("cadastre-map", zoningView);
+      // 용도지역 보기: 옅은 Positron 베이스 + 지명/도로명 라벨(건물은 흐릿하게만)
       const layer = mapType === "satellite" ? satelliteBaseLayer()
-        : lightThematic ? cadastreBaseLayer
+        : zoningView ? cadastreBaseLayer
         : baseLayers[mapType];
       activeBaseLayer = layer ? layer.addTo(map) : null;
-      // 지적도/용도지역일 때만 라벨 참조 레이어 추가, 그 외에는 제거
-      if (lightThematic) {
+      // 용도지역일 때만 라벨 참조 레이어 추가, 그 외에는 제거
+      if (zoningView) {
         if (!map.hasLayer(cadastreRefLayer)) cadastreRefLayer.addTo(map);
       } else if (map.hasLayer(cadastreRefLayer)) {
         map.removeLayer(cadastreRefLayer);
       }
-      // 지적도 보기: 옅은 회색 위에 지적선을 진하게 표시
-      if (cadastreView && $("apiKey").value.trim()) {
+      // 용도지역 보기: 색면 위에 지적선도 함께 표시(키 있으면 자동 켜기)
+      if (zoningView && $("apiKey").value.trim()) {
         $("showCadastre").checked = true;
-      } else if (lightThematic && !$("apiKey").value.trim()) {
-        status((zoningView ? "용도지역" : "지적도") + " 보기에는 VWorld API 키가 필요합니다.");
+      } else if (zoningView) {
+        status("용도지역 보기에는 VWorld API 키가 필요합니다.");
       }
       if ($("showCadastre").checked) updateCadastreOverlay();
       else if (cadastreLayer) cadastreLayer.bringToFront();
-      updateZoningOverlay(); // 용도지역 색면(요청 시) 갱신
+      updateZoningOverlay(); // 용도지역 색면 갱신
     }
 
     // 용도지역 색면 오버레이(VWorld WMS lt_c_uq111) — '용도지역' 지도 종류에서만 표시
@@ -1347,17 +1341,17 @@
         return;
       }
       const mapType = document.querySelector(".mapType:checked").value;
-      const cadastreView = mapType === "cadastre";
-      // halo(어두운 외곽선)는 베이스가 옅어 지적선이 묻히는 위성·지적도 보기에서만 적용.
+      const thematicView = mapType === "zoning";
+      // halo(어두운 외곽선)는 베이스가 옅거나 색면이 깔리는 위성·용도지역 보기에서만 적용.
       // 일반/백지도(연한 회색 지형)에서는 끔 → 타일 재래스터화 비용 제거.
-      setCadastreHalo(mapType === "satellite" || cadastreView);
+      setCadastreHalo(mapType === "satellite" || thematicView);
       const commonOptions = {
         format: "image/png",
         transparent: true,
         version: "1.3.0",
         key: apiKey,
         pane: "cadastrePane",
-        opacity: cadastreView ? 1.0 : 0.95,
+        opacity: thematicView ? 1.0 : 0.95,
         attribution: "VWorld cadastral",
         // 성능: 팬/줌 중에는 타일을 받지 않고 멈춘 뒤 한 번에 로드(WMS 요청·재래스터화 폭주 방지)
         updateWhenIdle: true,
@@ -2181,7 +2175,7 @@
     // API 키 입력이 끝나면(블러/엔터) 위성 베이스를 VWorld로 전환해 지적선 정합을 맞춘다.
     $("apiKey").addEventListener("change", () => {
       const mt = document.querySelector(".mapType:checked").value;
-      if (mt === "satellite" || mt === "zoning" || mt === "cadastre") updateBaseMap();
+      if (mt === "satellite" || mt === "zoning") updateBaseMap();
     });
 
     updateBaseMap();
