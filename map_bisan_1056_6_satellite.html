@@ -839,15 +839,16 @@
       </details>
 
       <details class="card" id="cardCadastre">
-        <summary><span class="summary-ico">🗺️</span><span class="summary-title">연속지적 실행</span><span class="chev">▾</span></summary>
+        <summary><span class="summary-ico">🗺️</span><span class="summary-title">연속지적 및 용도지역</span><span class="chev">▾</span></summary>
         <div class="card-body">
+          <p class="hint">주소 반경 내 <b>연속지적(필지 경계) + 용도지역</b>을 처리합니다. ‘<b>DXF 다운로드</b>’는 웹에서 바로 CAD용 DXF(EPSG:5186, 필지+용도지역)로 받고(QGIS 불필요), ‘<b>연속지적 실행</b>’은 로컬 스크립트로 저장 폴더에 전체 산출물을 생성합니다(브이월드 로그인 필요). 둘 다 VWorld API 키가 필요합니다.</p>
           <div class="row">
             <div class="field">
-              <label for="radius">연속지적 반경(m)</label>
+              <label for="radius">반경(m) <span style="font-weight:400;color:#8a958d">— DXF는 최대 1000</span></label>
               <input id="radius" type="number" min="100" step="100" value="1000">
             </div>
             <div class="field folder-field">
-              <label for="outDir">저장 폴더</label>
+              <label for="outDir">저장 폴더 <span style="font-weight:400;color:#8a958d">— 실행 산출물</span></label>
               <div class="folder-row">
                 <input id="outDir" value="C:\Users\admin\OneDrive\Desktop\연속지적">
                 <button id="selectFolder" type="button">찾기</button>
@@ -856,7 +857,7 @@
           </div>
 
           <div class="field">
-            <label for="parcelListFile">선택 지번 엑셀(.xlsx/.csv/.txt)</label>
+            <label for="parcelListFile">선택 지번 엑셀(.xlsx/.csv/.txt) <span style="font-weight:400;color:#8a958d">— 실행 시 강조</span></label>
             <input id="parcelListFile" type="file" accept=".xlsx,.csv,.txt">
           </div>
 
@@ -871,7 +872,8 @@
           </div>
 
           <div class="actions">
-            <button id="runCadastre" class="wide">연속지적 실행</button>
+            <button id="downloadCadastreDxf" class="download" type="button">DXF 다운로드</button>
+            <button id="runCadastre">연속지적 실행</button>
           </div>
 
           <div id="cadastreProgress" class="progress-wrap" style="display:none">
@@ -885,23 +887,6 @@
               <summary>원본 로그 보기</summary>
               <pre id="cadastreLogRaw"></pre>
             </details>
-          </div>
-        </div>
-      </details>
-
-      <details class="card" id="cardDxf">
-        <summary><span class="summary-ico">📐</span><span class="summary-title">연속지적 DXF 내려받기</span><span class="chev">▾</span></summary>
-        <div class="card-body">
-          <p class="hint">입력한 주소 반경 내 연속지적(필지 경계)+용도지역을 VWorld에서 모아 <b>CAD용 DXF</b>(EPSG:5186 좌표)로 내려받습니다. QGIS 없이 웹에서 동작합니다. (지적도 데이터에는 VWorld API 키 필요)</p>
-          <div class="grid-2">
-            <div class="field">
-              <label for="dxfRadius">반경(m) · 50~1000</label>
-              <input id="dxfRadius" type="number" min="50" max="1000" step="50" value="300">
-            </div>
-            <div class="field">
-              <label>&nbsp;</label>
-              <button id="downloadCadastreDxf" class="small-button" type="button" style="width:100%">DXF 다운로드</button>
-            </div>
           </div>
         </div>
       </details>
@@ -1991,7 +1976,7 @@
         const data = requireInputs({ requireApiKey: true });
         if (!(await checkBridge())) return;
         setBusy(button, true, "생성 중...");
-        const radius = Math.max(50, Math.min(Number($("dxfRadius").value.trim() || 300), 1000));
+        const radius = Math.max(50, Math.min(Number($("radius").value.trim() || 1000), 1000));
         status(`연속지적 DXF 생성 중입니다(반경 ${radius}m). 범위가 넓으면 시간이 걸릴 수 있습니다...`);
         const params = new URLSearchParams({ address: data.address, apiKey: data.apiKey, radius: String(radius) });
         const res = await fetch(`${bridgeBase}/api/cadastre-dxf?${params.toString()}`);
