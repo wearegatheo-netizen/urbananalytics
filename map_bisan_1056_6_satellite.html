@@ -841,7 +841,9 @@
       <details class="card" id="cardCadastre">
         <summary><span class="summary-ico">🗺️</span><span class="summary-title">연속지적 및 용도지역</span><span class="chev">▾</span></summary>
         <div class="card-body">
-          <p class="hint">주소 반경 내 <b>연속지적(필지 경계) + 용도지역</b>을 처리합니다. ‘<b>DXF 다운로드</b>’는 웹에서 바로 CAD용 DXF(EPSG:5186, 필지+용도지역)로 받고(QGIS 불필요), ‘<b>연속지적 실행</b>’은 로컬 스크립트로 저장 폴더에 전체 산출물을 생성합니다(브이월드 로그인 필요). 둘 다 VWorld API 키가 필요합니다.</p>
+          <p class="hint">같은 ‘연속지적+용도지역’이지만 <b>데이터 출처·완전성</b>이 다릅니다. 둘 다 VWorld API 키가 필요합니다.<br>
+            • <b>DXF 빠른추출(웹)</b> — VWorld API로 반경 내 필지+용도지역을 즉시 DXF(EPSG:5186)로. <b>최대 1,000필지</b>(넓으면 일부 누락), QGIS·로그인 불필요, 어디서나 동작. <i>빠른 확인·소규모용.</i><br>
+            • <b>정식 연속지적(QGIS)</b> — VWorld 공식 원본 셰이프를 받아 QGIS로 정밀 처리. <b>전수(누락 없음)</b> + 지번·용도지역 라벨·QGIS 프로젝트까지 저장 폴더에 생성. <i>QGIS 설치+VWorld 로그인 필요(이 PC 전용)·정식 도면작업용.</i></p>
           <div class="row">
             <div class="field">
               <label for="radius">반경(m) <span style="font-weight:400;color:#8a958d">— DXF는 최대 1000</span></label>
@@ -872,8 +874,8 @@
           </div>
 
           <div class="actions">
-            <button id="downloadCadastreDxf" class="download" type="button">DXF 다운로드</button>
-            <button id="runCadastre">연속지적 실행</button>
+            <button id="downloadCadastreDxf" class="download" type="button" title="VWorld API로 반경 내 필지+용도지역을 즉시 DXF로(최대 1,000필지, QGIS 불필요)">DXF 빠른추출 · 웹</button>
+            <button id="runCadastre" title="공식 원본 셰이프를 QGIS로 정밀 처리(전수·라벨·QGIS프로젝트, QGIS+로그인 필요)">정식 연속지적 · QGIS</button>
           </div>
 
           <div id="cadastreProgress" class="progress-wrap" style="display:none">
