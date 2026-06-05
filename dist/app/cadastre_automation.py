@@ -203,13 +203,36 @@ def radius_label(radius_m):
     return f"{int(radius_m)}m"
 
 
+def region_from_structure(structure, refined_text):
+    """VWorld 지오코딩 응답의 구조화 정보(level1=시도, level2=시군구)에서 시도·시군구를 추출.
+    구조화 정보가 없으면 텍스트 파싱으로 폴백한다. (리소스 라벨은 '_시도_시군구.zip' 형태)"""
+    structure = structure or {}
+    lv1 = (structure.get("level1") or "").strip()
+    lv2 = (structure.get("level2") or "").strip()
+    sido = normalize_region_name(lv1) if lv1 else None
+    # 일반구(예: '성남시 분당구')는 공백을 '_'로, 자치구(예: '영등포구')는 그대로
+    sigungu = lv2.replace(" ", "_") if lv2 else None
+    if not sido:
+        return parse_region_from_text(refined_text)
+    return sido, sigungu
+
+
 def parse_region_from_text(text):
     tokens = text.split()
     if not tokens:
         raise ValueError("주소에서 시도/시군구를 읽지 못했습니다.")
-    sido = normalize_region_name(tokens[0])
+    # 시도: 토큰 중 알려진 시도명에 매칭되는 첫 토큰을 사용(주소가 시도로 시작하지 않아도 대응)
+    sido = None
+    sido_idx = 0
+    for i, token in enumerate(tokens):
+        if token in SIDO_ALIASES:
+            sido = SIDO_ALIASES[token]
+            sido_idx = i
+            break
+    if sido is None:
+        sido = normalize_region_name(tokens[0])
     sigungu = None
-    region_tokens = tokens[1:5]
+    region_tokens = tokens[sido_idx + 1:sido_idx + 5]
     for idx, token in enumerate(region_tokens):
         if token.endswith("시") and idx + 1 < len(region_tokens) and region_tokens[idx + 1].endswith("구"):
             sigungu = f"{token}_{region_tokens[idx + 1]}"
@@ -242,10 +265,40 @@ def geocode_address(address, api_key):
         if response.get("status") == "OK":
             result = response["result"]
             point = result["point"]
-            refined = result.get("refined", {}).get("text") or address
-            return float(point["x"]), float(point["y"]), refined
+            refined_obj = result.get("refined", {}) or {}
+            refined = refined_obj.get("text") or address
+            structure = refined_obj.get("structure", {}) or {}
+            return float(point["x"]), float(point["y"]), refined, structure
         last_error = response
     raise ValueError(f"VWorld 지오코딩 실패: {last_error}")
+
+
+def reverse_region(x, y, api_key, crs="epsg:5174"):
+    """좌표를 역지오코딩(getAddress)하여 (시도, 시군구)를 반환.
+    forward getcoord는 refined.structure가 비어 시도/시군구를 못 주는 경우가 많아,
+    좌표 기준 reverse가 가장 신뢰성 높다. structure.level1=시도, level2=시군구."""
+    params = {
+        "service": "address", "request": "getAddress", "version": "2.0",
+        "crs": crs, "point": f"{x},{y}", "format": "json", "type": "PARCEL", "key": api_key,
+    }
+    try:
+        data = json.loads(http_get_text(VWORLD_GEOCODE_URL, params))
+    except Exception:
+        return None, None
+    resp = data.get("response", {})
+    if resp.get("status") != "OK":
+        return None, None
+    result = resp.get("result", [])
+    if isinstance(result, dict):
+        result = [result]
+    for item in result:
+        st = item.get("structure", {}) or {}
+        lv1 = (st.get("level1") or "").strip()
+        lv2 = (st.get("level2") or "").strip()
+        if lv1:
+            # 일반구(예: '성남시 분당구')는 '_'로, 자치구(예: '영등포구')는 그대로
+            return normalize_region_name(lv1), (lv2.replace(" ", "_") if lv2 else None)
+    return None, None
 
 
 def load_resource_index(cache_path):
@@ -1451,8 +1504,12 @@ def main():
 
     try:
         if args.vworld_key:
-            x, y, refined_address = geocode_address(args.address, args.vworld_key)
-            sido, sigungu = parse_region_from_text(refined_address)
+            x, y, refined_address, geo_structure = geocode_address(args.address, args.vworld_key)
+            # 시도·시군구: 좌표 역지오코딩(getAddress)이 가장 신뢰성 높다.
+            # 실패 시 forward structure → 텍스트 파싱 순으로 폴백.
+            sido, sigungu = reverse_region(x, y, args.vworld_key)
+            if not sido:
+                sido, sigungu = region_from_structure(geo_structure, refined_address)
         else:
             if args.x is None or args.y is None or not args.sido:
                 raise ValueError("VWorld API 키가 없으면 --x, --y, --sido가 필요합니다.")
