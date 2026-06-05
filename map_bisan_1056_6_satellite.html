@@ -948,6 +948,7 @@
             <summary><span>건폐율 · 건축선후퇴 · 사선계수 <span class="muted-note">자동값 덮어쓰기(선택)</span></span><span class="chev">▾</span></summary>
             <div class="subcard-body">
               <p class="hint">건폐율은 용도지역 → 지구단위계획·조례(법제처)·시행령 상한 순으로 자동 적용됩니다. 확인값으로 덮어쓸 때만 입력하세요.</p>
+              <label class="checkbox-row"><input id="useRegArea" type="checkbox" checked>공부면적 자동조회(토지특성) — 바닥면적 산정에 공부면적 사용(조회 실패 시 도형면적)</label>
               <div class="grid-2">
                 <div class="field">
                   <label for="ordinanceCoverage">조례 건폐율(%)</label>
@@ -1027,7 +1028,8 @@
             <tr>
               <th>필지</th>
               <th>용도지역</th>
-              <th>대지면적</th>
+              <th>공부면적</th>
+              <th>대지면적(도형)</th>
               <th>건폐율</th>
               <th>바닥면적</th>
               <th>접도 도로</th>
@@ -1889,9 +1891,10 @@
         <tr title="${escapeHtml(row.method || "")}">
           <td title="${escapeHtml(row.members || row.parcel || "")}">${escapeHtml(row.parcel || "")}</td>
           <td${row.zoneUpgraded ? ' style="color:#1f7a4d;font-weight:700" title="' + escapeHtml((row.zoneAuto || "-") + " → " + (row.zone || "-") + " 상향") + '"' : ""}>${escapeHtml(row.zone || "-")}${row.zoneUpgraded ? " ↑" : ""}</td>
-          <td>${numberText(row.area, 2)}</td>
+          <td title="${row.regArea != null ? "토지특성 공부면적(바닥면적 산정 기준)" : "공부면적 조회 안됨 → 도형면적 사용"}">${row.regArea != null ? numberText(row.regArea, 2) : "—"}</td>
+          <td title="연속지적 폴리곤 계산(도형)면적">${numberText(row.geomArea, 2)}</td>
           <td title="${escapeHtml(row.coverageSource || "")}">${numberText(row.coverageRatio, 2)}%</td>
-          <td>${numberText(row.floorArea, 2)}</td>
+          <td title="${escapeHtml((row.areaSource||"") + " × 건폐율")}">${numberText(row.floorArea, 2)}</td>
           <td title="${escapeHtml(row.roadDetail || "")}">${escapeHtml(row.roadName || "-")}</td>
           <td>${numberText(row.roadWidth, 2)}</td>
           <td>${numberText(row.frontage, 2)}</td>
@@ -1963,6 +1966,7 @@
           setbackRear: $("heightSetbackRear").value.trim(),
           lotSetbacks: lotSetbacks,
           lotZoneOverride: lotZones,
+          useRegArea: $("useRegArea") ? $("useRegArea").checked : true,
           centerRank: $("centerRank").value,
           centerAdjustPct: $("centerAdjustPct").value.trim(),
           reviewNote: $("heightReviewNote").value.trim()

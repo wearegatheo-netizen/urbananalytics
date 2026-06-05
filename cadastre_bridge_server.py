@@ -1017,6 +1017,35 @@ def clamp_center_pct(center_rank, requested_pct):
     return max(-rng, min(rng, pct))
 
 
+def fetch_registered_area(pnu, api_key, domain=""):
+    """VWorld NED 토지특성정보(getLandCharacteristics)에서 PNU의 공부면적(토지면적, lndpclAr, ㎡)을
+    최신 기준연도 기준으로 반환. 실패/없음이면 None(같은 VWorld 키 사용)."""
+    pnu = str(pnu or "").strip()
+    if not api_key or not pnu:
+        return None
+    params = {"key": api_key, "pnu": pnu, "format": "json", "numOfRows": "30", "pageNo": "1"}
+    dom = domain or current_vworld_domain()
+    if dom:
+        params["domain"] = dom
+    try:
+        data = http_get_json("https://api.vworld.kr/ned/data/getLandCharacteristics", params, retries=2)
+    except Exception:
+        return None
+    fields = (data.get("landCharacteristicss") or {}).get("field")
+    if isinstance(fields, dict):
+        fields = [fields]
+    if not fields:
+        return None
+    best = None
+    for f in fields:
+        ar = parse_float(f.get("lndpclAr"))
+        if ar and ar > 0:
+            yr = str(f.get("stdrYear") or "")
+            if best is None or yr >= best[0]:
+                best = (yr, ar)
+    return best[1] if best else None
+
+
 def analyze_selected_parcels(payload):
     api_key = str(payload.get("apiKey") or "").strip()
     if not api_key:
@@ -1040,6 +1069,8 @@ def analyze_selected_parcels(payload):
     # 중심지 위계 조정(①): 위계 + 조정%
     center_rank = str(payload.get("centerRank") or "").strip()
     center_pct = clamp_center_pct(center_rank, parse_float(payload.get("centerAdjustPct"), 0.0))
+    # 공부면적(토지특성) 자동조회 사용 여부(기본 사용; 실패 시 도형면적으로 폴백)
+    use_reg_area = payload.get("useRegArea", True) is not False
     rows = []
     total_floor_area = 0.0
     total_volume = 0.0
@@ -1062,6 +1093,8 @@ def analyze_selected_parcels(payload):
         member_rings = []
         member_parcels = []
         member_area_sum = 0.0
+        member_reg_sum = 0.0
+        all_have_reg = True   # 모든 멤버에 공부면적이 조회됐는지(획지 합산용)
         for item in members:
             m_lat = float(item.get("lat"))
             m_lon = float(item.get("lon"))
@@ -1071,15 +1104,29 @@ def analyze_selected_parcels(payload):
             member_rings.append(ring)
             member_parcels.append(m_parcel)
             member_area_sum += abs(projected_polygon_area(project_ring(ring)))
+            # 공부면적(토지특성, lndpclAr) — PNU로 자동조회(같은 VWorld 키)
+            reg = None
+            if use_reg_area:
+                pnu = str((feature.get("properties") or {}).get("pnu") or "").strip()
+                reg = fetch_registered_area(pnu, api_key)
+            if reg and reg > 0:
+                member_reg_sum += reg
+            else:
+                all_have_reg = False
 
+        geom_area = member_area_sum
         if len(member_rings) <= 1:
             ring = member_rings[0]
-            area = abs(projected_polygon_area(project_ring(ring)))
+            geom_area = abs(projected_polygon_area(project_ring(ring)))
         else:
             # 여러 필지를 하나의 획지로 합침(외곽선은 union, 면적은 비중첩 합)
             merged_ring = merge_rings_to_lonlat(member_rings)
             ring = merged_ring if merged_ring else member_rings[0]
-            area = member_area_sum
+            geom_area = member_area_sum
+        reg_area = member_reg_sum if (use_reg_area and all_have_reg and member_reg_sum > 0) else None
+        # 대지면적(산정 기준): 공부면적 있으면 공부, 없으면 도형
+        area = reg_area if reg_area else geom_area
+        area_source = "공부면적(토지특성)" if reg_area else "도형면적(연속지적)"
         projected = project_ring(ring)
         c_lat, c_lon = lonlat_centroid(ring)
 
@@ -1178,6 +1225,9 @@ def analyze_selected_parcels(payload):
                 "zoneAuto": zone_auto or "-",
                 "zoneUpgraded": zone_upgraded,
                 "area": round(area, 3),
+                "geomArea": round(geom_area, 3),
+                "regArea": round(reg_area, 3) if reg_area else None,
+                "areaSource": area_source,
                 "frontSetback": round(front_setback, 3),
                 "rearSetback": round(rear_setback, 3),
                 "coverageRatio": round(coverage_ratio * 100, 3),
@@ -2047,7 +2097,7 @@ def build_height_report_xlsx(payload):
     ws["A2"] = f"생성: {time.strftime('%Y-%m-%d %H:%M')}   ·   사선계수(도로사선) = {slope}   ·   필지 수 = {len(rows)}"
     ws["A2"].font = legend_font
     legends = [
-        "[산식] 바닥면적 = 대지면적 × 건폐율(%) ÷ 100",
+        "[산식] 바닥면적 = 대지면적 × 건폐율(%) ÷ 100   (대지면적은 공부면적(토지특성) 있으면 공부, 없으면 도형면적 사용)",
         "[산식] (1.5D 도로사선) 최저높이 = 사선계수 × (도로폭 + 전면건축선후퇴)",
         "[산식] 최고높이 = 사선계수 × (도로폭 + 전면건축선후퇴 + (필지깊이 − 후면건축선후퇴))",
         "[산식] 평균높이 = (최저높이 + 최고높이) ÷ 2,   체적 = 바닥면적 × 평균높이,   블록 평균높이 = Σ체적 ÷ Σ바닥면적",
@@ -2065,6 +2115,7 @@ def build_height_report_xlsx(payload):
         "필지깊이(m)", "사선계수", "최저높이(m)", "최고높이(m)", "평균높이(m)", "체적(㎥)",
         "산정방식", "건폐율출처", "신뢰도", "검산(산식·숫자 대입)", "비고",
         "전면후퇴(m)", "후면후퇴(m)", "입지", "용도지역상한(m)", "위계조정후상한(m)", "상한판정",
+        "공부면적(㎡)", "도형면적(㎡)", "면적출처",
     ]
     ncols = len(headers)
     for c, text in enumerate(headers, 1):
@@ -2079,7 +2130,7 @@ def build_height_report_xlsx(payload):
     rear_col = get_column_letter(19)
     input_cols = {2, 3, 5, 6, 7, 8, 9, 10, 18, 19}
     calc_cols = {4, 11, 12}
-    num_cols = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 19, 21, 22}
+    num_cols = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 19, 21, 22, 24, 25}
 
     for i, row in enumerate(rows):
         rr = first_data + i
@@ -2152,6 +2203,10 @@ def build_height_report_xlsx(payload):
             ws.cell(row=rr, column=23, value=("초과" if row.get("capExceeded") else "적합"))
         else:
             ws.cell(row=rr, column=23, value="대상外")
+        # 공부면적/도형면적/면적출처(대지면적 B열은 산정에 쓴 값 = 공부 우선)
+        ws.cell(row=rr, column=24, value=parse_float(row.get("regArea")))
+        ws.cell(row=rr, column=25, value=parse_float(row.get("geomArea")))
+        ws.cell(row=rr, column=26, value=row.get("areaSource") or "")
 
         for c in range(1, ncols + 1):
             cell = ws.cell(row=rr, column=c)
@@ -2189,7 +2244,7 @@ def build_height_report_xlsx(payload):
             cell.alignment = right
 
     widths = [16, 12, 9, 12, 9, 11, 11, 9, 11, 11, 11, 12, 20, 12, 8, 46, 18,
-              11, 11, 8, 14, 16, 9]
+              11, 11, 8, 14, 16, 9, 12, 12, 18]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = ws.cell(row=first_data, column=1)
