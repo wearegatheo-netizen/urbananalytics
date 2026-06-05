@@ -49,7 +49,7 @@ DEFAULT_ZONE_STYLE_PATH = Path(
 DXF_TEXT_STYLE_NAME = "STANDARD"
 DXF_TEXT_FONT_FAMILY = "KoPubWorld돋움체 Medium"
 DXF_TEXT_FONT_FILE = r"C:\Users\admin\AppData\Local\Microsoft\Windows\Fonts\KoPubWorld Dotum Medium.ttf"
-PARCEL_LIST_LAYER_NAME = "엑셀선택지번"
+PARCEL_LIST_LAYER_NAME = "선택지번"
 DEFAULT_OUT_DIR = Path.cwd() / "outputs"
 DATASET_ID_5174 = "30564"
 DATASET_INDEX_URL = "https://data.edmgr.kr/dataView.do?id=vworld_open_30564"
@@ -892,7 +892,7 @@ def zone_style_from_qml(style_path):
             "rgba": rgba,
             "color": dxf_color_index(",".join(str(part) for part in rgba)),
             "truecolor": truecolor_value(rgba),
-            "layer": safe_dxf_layer_name(value, label or value),
+            "layer": "04_H_" + safe_dxf_layer_name(value, label or value),
         }
     return result
 
@@ -1201,7 +1201,7 @@ def force_text_style_font(dxf_text, style_name=DXF_TEXT_STYLE_NAME, font_file=DX
                     )
             else:
                 entity_layer = next((pair[1] for pair in entity if pair[0] == "8"), "")
-                if entity_layer == "JIBUN":
+                if entity_layer == "00_지번":
                     upsert_dxf_pair(entity, "7", style_name, after_codes=["1"])
             output.extend(entity)
             continue
@@ -1580,22 +1580,24 @@ def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone
     # QGIS writes standards-compliant DXF; normalizing layer names improves older CAD compatibility.
     dxf_text = Path(dxf_path).read_text(encoding="cp949", errors="replace")
     replacements = {
-        "cadastre_boundary_lines": "CADASTRE_LINE",
-        "cadastre_label_source": "JIBUN",
+        "cadastre_boundary_lines": "00_지적",
+        "CADASTRE_LINE": "00_지적",
+        "cadastre_label_source": "00_지번",
+        "JIBUN": "00_지번",
         "zone_source": "ZONE",
-        "SILPOK_ROAD": "실폭도로",
-        "URBAN_PLAN_FACILITY": "도시계획시설",
+        "SILPOK_ROAD": "04_H_실폭도로",
+        "URBAN_PLAN_FACILITY": "02_도시계획시설(도로)",
     }
     for old, new in replacements.items():
         dxf_text = dxf_text.replace(old, new)
     dxf_text = force_zone_dxf_colors(dxf_text, zone_style)
     # 레이어별 ACI 색상/지번 글씨 강제(사용자 지정)
-    dxf_text = force_layer_dxf_color(dxf_text, "JIBUN", 250)        # 지번 색상 250
-    dxf_text = force_layer_dxf_color(dxf_text, "실폭도로", 9)        # 실폭도로 해치 색상 9
-    dxf_text = force_layer_dxf_color(dxf_text, "도시계획시설", 1)     # 도시계획시설 빨강(1)
+    dxf_text = force_layer_dxf_color(dxf_text, "00_지번", 250)            # 지번 색상 250
+    dxf_text = force_layer_dxf_color(dxf_text, "04_H_실폭도로", 9)         # 실폭도로 해치 색상 9
+    dxf_text = force_layer_dxf_color(dxf_text, "02_도시계획시설(도로)", 1)  # 도시계획시설 빨강(1)
     dxf_text = force_solid_hatch_compatibility(dxf_text)
-    dxf_text = remove_non_text_entities_from_layer(dxf_text, "JIBUN")
-    dxf_text = force_layer_text_height(dxf_text, "JIBUN", 1)        # 지번 글씨크기 1
+    dxf_text = remove_non_text_entities_from_layer(dxf_text, "00_지번")
+    dxf_text = force_layer_text_height(dxf_text, "00_지번", 1)            # 지번 글씨크기 1
     dxf_text = force_text_style_font(dxf_text)
     dxf_text = force_dxf_codepage(dxf_text)
     with Path(dxf_path).open("w", encoding="cp949", errors="replace", newline="") as f:
