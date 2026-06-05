@@ -11,6 +11,7 @@
     [string]$OutDir,
     [string[]]$ParcelListPath,
     [string]$Style,
+    [string]$VWorldDomain = $env:VWORLD_DOMAIN,
     [switch]$OpenQgis
 )
 
@@ -313,6 +314,9 @@ if ($Style) {
 }
 $processArgs += $zoneZipArgs
 $processArgs += $roadZipArgs
+if ($VWorldDomain) {
+    $processArgs += @("--vworld-domain", $VWorldDomain)
+}
 
 & $qgisPython @processArgs
 Write-Host "완료되었습니다. 결과 저장 위치: $OutDir"

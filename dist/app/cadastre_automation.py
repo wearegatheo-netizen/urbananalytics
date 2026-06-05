@@ -1,6 +1,7 @@
 ﻿import argparse
 import csv
 import json
+import math
 import os
 import re
 import sys
@@ -57,6 +58,9 @@ ROAD_DATASET_ID = "30057"
 ROAD_INDEX_URL = "https://data.edmgr.kr/dataView.do?id=vworld_open_30057"
 VWORLD_DOWNLOAD_URL = "https://www.vworld.kr/dtmk/downloadResourceFile.do"
 VWORLD_GEOCODE_URL = "https://api.vworld.kr/req/address"
+VWORLD_WFS_URL = "https://api.vworld.kr/req/wfs"
+# 도시계획시설(WFS): 도로 + 교통시설
+PLAN_FACILITY_TYPENAMES = [("lt_c_upisuq151", 1000), ("lt_c_upisuq152", 800)]
 ZONE_DEFINITIONS = {
     "urban": {"label": "도시지역", "line_layer": "ZONE_URBAN", "color": 1, "rgb": (255, 0, 0)},
     "management": {"label": "관리지역", "line_layer": "ZONE_MANAGEMENT", "color": 3, "rgb": (0, 170, 0)},
@@ -337,22 +341,22 @@ def match_resource(resources, sido, sigungu):
 
 
 def load_road_resource_index(cache_path):
-    """도로명주소 실폭도로(시도별) 다운로드 리소스 목록. 라벨 '실폭도로_{시도}.zip 데이터 SHP'와
-    가장 가까운(뒤) fileNo 링크를 매핑한다(이 페이지는 라벨이 <a> 밖에 있어 정규식으로 추출)."""
+    """도로명주소 실폭도로(시도별) 다운로드 리소스 목록.
+    라벨은 <a href='...downloadResourceFile.do?...fileNo=N'> (도로명주소)실폭도로_{시도}.zip 데이터 SHP </a>
+    형태로 <a> 안에 있다(href는 작은따옴표). <a>를 직접 파싱해 라벨↔fileNo를 정확히 매핑."""
     if cache_path.exists():
         return json.loads(cache_path.read_text(encoding="utf-8"))
     html = http_get_text(ROAD_INDEX_URL)
-    labels = [(m.start(), m.group(0)) for m in re.finditer(r"실폭도로_[^<\s]+\.zip[^<]*SHP", html)]
-    links = sorted((m.start(), m.group(1))
-                   for m in re.finditer(r"downloadResourceFile\.do\?ds_id=" + ROAD_DATASET_ID + r"&fileNo=(\d+)", html))
     resources = []
-    for lpos, label in labels:
-        after = [(p, fn) for p, fn in links if p >= lpos]
-        if not after:
-            continue
-        fn = after[0][1]
-        href = f"{VWORLD_DOWNLOAD_URL}?ds_id={ROAD_DATASET_ID}&fileNo={fn}"
-        resources.append({"label": " ".join(label.split()), "href": href})
+    for m in re.finditer(
+        r"<a[^>]*href=['\"]([^'\"]*downloadResourceFile\.do[^'\"]*)['\"][^>]*>(.*?)</a>", html, re.S
+    ):
+        href = m.group(1)
+        label = " ".join(re.sub(r"<[^>]+>", "", m.group(2)).split())
+        if "실폭도로" in label and ".zip" in label:
+            if href.startswith("downloadResourceFile"):
+                href = "https://www.vworld.kr/dtmk/" + href
+            resources.append({"label": label, "href": href})
     if not resources:
         raise RuntimeError("도로명주소 실폭도로 다운로드 리소스 목록을 찾지 못했습니다.")
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -379,6 +383,57 @@ def extract_zip_find(zip_path, extract_dir, name_contains):
         raise FileNotFoundError(f"SHP 파일을 찾지 못했습니다: {extract_dir}")
     matched = [s for s in shps if name_contains.lower() in s.name.lower()]
     return (matched or shps)[0]
+
+
+def fetch_wfs_features(typename, bbox4326, api_key, domain, maxf):
+    """VWorld WFS(req/wfs)에서 bbox(EPSG:4326) 내 GeoJSON 피처 목록을 반환. 실패 시 빈 목록."""
+    params = {
+        "REQUEST": "GetFeature", "TYPENAME": typename, "VERSION": "1.1.0",
+        "MAXFEATURES": str(maxf), "SRSNAME": "EPSG:4326", "OUTPUT": "json",
+        "BBOX": bbox4326, "KEY": api_key,
+    }
+    if domain:
+        params["DOMAIN"] = domain
+    try:
+        data = json.loads(http_get_text(VWORLD_WFS_URL, params))
+        return data.get("features") or []
+    except Exception as exc:
+        print(f"도시계획시설 WFS({typename}) 조회 경고: {str(exc)[:140]}")
+        return []
+
+
+def build_plan_facility_lines(x, y, radius_m, api_key, domain, work_dir, result_dir, stem, r_label):
+    """도시계획시설(도로 lt_c_upisuq151 + 교통시설 lt_c_upisuq152)을 WFS로 받아
+    반경 클립 → 면 경계선 SHP를 만든다(EPSG:5174). (라인 SHP 경로, 피처수) 반환."""
+    # 5174 중심 → 4326 lon/lat → 대략 bbox(도분)
+    t = QgsCoordinateTransform(
+        QgsCoordinateReferenceSystem("EPSG:5174"),
+        QgsCoordinateReferenceSystem("EPSG:4326"),
+        QgsProject.instance(),
+    )
+    pt = t.transform(QgsPointXY(x, y))
+    lon, lat = pt.x(), pt.y()
+    dlat = radius_m / 111320.0
+    dlon = radius_m / (111320.0 * max(math.cos(math.radians(lat)), 1e-9))
+    bbox = f"{lon - dlon},{lat - dlat},{lon + dlon},{lat + dlat}"
+    feats = []
+    for typename, maxf in PLAN_FACILITY_TYPENAMES:
+        feats.extend(fetch_wfs_features(typename, bbox, api_key, domain, maxf))
+    if not feats:
+        return None, 0
+    work_dir.mkdir(parents=True, exist_ok=True)
+    gj_path = work_dir / "plan_facilities.geojson"
+    gj_path.write_text(
+        json.dumps({"type": "FeatureCollection", "features": feats}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    selected_shp = result_dir / f"{stem}_{r_label}_plan.shp"
+    count = export_zone_within_radius(gj_path, x, y, radius_m, selected_shp)
+    if count <= 0:
+        return None, 0
+    line_shp = result_dir / f"{stem}_{r_label}_plan_lines.shp"
+    export_polygon_boundaries_to_lines(selected_shp, line_shp)
+    return line_shp, count
 
 
 def download_resource(resource, target_dir):
@@ -1342,7 +1397,7 @@ def create_zone_hatch_line_layers(zone_layers, zone_style, spacing=10.0):
     return valid_layers
 
 
-def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone_layers=None, zone_style_path=None, parcel_list_line_shp=None, road_line_shp=None):
+def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone_layers=None, zone_style_path=None, parcel_list_line_shp=None, road_line_shp=None, plan_line_shp=None):
     line_layer = QgsVectorLayer(str(line_shp), "cadastre_boundary_lines", "ogr")
     if not line_layer.isValid():
         raise RuntimeError(f"DXF용 라인 레이어를 불러오지 못했습니다: {line_shp}")
@@ -1400,6 +1455,23 @@ def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone
             road_layer.setLabelsEnabled(False)
             road_layer.triggerRepaint()
             export_layers.append(road_layer)
+    if plan_line_shp:
+        plan_layer = QgsVectorLayer(str(plan_line_shp), "URBAN_PLAN_FACILITY", "ogr")
+        if plan_layer.isValid():
+            plan_layer.setName("URBAN_PLAN_FACILITY")
+            plan_symbol = QgsLineSymbol.createSimple(
+                {
+                    "line_color": "0,160,160,255",
+                    "line_width": "0.3",
+                    "line_width_unit": "MM",
+                    "line_style": "dash",
+                }
+            )
+            plan_symbol.setColor(QColor(0, 160, 160, 255))
+            plan_layer.setRenderer(QgsSingleSymbolRenderer(plan_symbol))
+            plan_layer.setLabelsEnabled(False)
+            plan_layer.triggerRepaint()
+            export_layers.append(plan_layer)
     for zone in zone_layers:
         config = ZONE_DEFINITIONS[zone["key"]]
         zone_polygon_layer = QgsVectorLayer(str(zone["selected_shp"]), config["line_layer"], "ogr")
@@ -1476,6 +1548,7 @@ def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone
         "cadastre_label_source": "JIBUN",
         "zone_source": "ZONE",
         "SILPOK_ROAD": "실폭도로",
+        "URBAN_PLAN_FACILITY": "도시계획시설",
     }
     for old, new in replacements.items():
         dxf_text = dxf_text.replace(old, new)
@@ -1561,6 +1634,7 @@ def main():
     parser.add_argument("--input-zip", type=Path, help="VWorld에서 이미 내려받은 연속지적도 ZIP을 직접 사용")
     parser.add_argument("--zone-zip", action="append", default=[], help="Optional land-use zone ZIP in key=path format")
     parser.add_argument("--road-zip", type=Path, help="도로명주소 실폭도로(시도별) SHP ZIP 경로(Z_KAIS_TL_SPRD_RW)")
+    parser.add_argument("--vworld-domain", default=os.environ.get("VWORLD_DOMAIN", ""), help="VWorld WFS 인증 도메인(키 등록 도메인)")
     parser.add_argument("--parcel-list", type=Path, action="append", default=[], help="DXF에 별도 레이어로 추가할 지번 목록 엑셀/CSV/TXT 파일")
     args = parser.parse_args()
 
@@ -1597,7 +1671,7 @@ def main():
         # 도로명주소 실폭도로(시도별) 리소스도 함께 해결(실패해도 전체 진행에 영향 없음)
         road_resource = None
         try:
-            road_cache = out_dir / "vworld_30057_road_resources.json"
+            road_cache = out_dir / "vworld_30057_road_resources_v2.json"
             road_resource = match_road_resource(load_road_resource_index(road_cache), sido)
         except Exception as road_exc:
             print(f"실폭도로 리소스 조회 경고: {road_exc}")
@@ -1703,8 +1777,21 @@ def main():
         elif args.road_zip:
             print(f"실폭도로 ZIP 경로를 찾지 못해 건너뜁니다: {args.road_zip}")
 
+        # 도시계획시설(도로·교통시설): VWorld WFS로 받아 반경 클립 → 면 경계선 → '도시계획시설' 레이어
+        plan_line_for_dxf = None
+        plan_count = 0
+        if args.vworld_key:
+            try:
+                print("도시계획시설(도로·교통시설)을 WFS로 받아 반경 안에서 선택하는 중입니다.")
+                plan_line_for_dxf, plan_count = build_plan_facility_lines(
+                    x, y, args.radius, args.vworld_key, args.vworld_domain,
+                    extracted / "plan_facilities", result_dir, stem, r_label)
+                print(f"도시계획시설 선택 개수: {plan_count}")
+            except Exception as plan_exc:
+                print(f"도시계획시설 처리를 건너뜁니다(계속 진행): {plan_exc}")
+
         print("연속지적 라인과 용도지역 해치 DXF를 만드는 중입니다.")
-        dxf_path = apply_style_and_export_dxf(line_shp, selected_shp, args.style, dxf_path, zone_layers, args.zone_style, parcel_list_line_for_dxf, road_line_for_dxf)
+        dxf_path = apply_style_and_export_dxf(line_shp, selected_shp, args.style, dxf_path, zone_layers, args.zone_style, parcel_list_line_for_dxf, road_line_for_dxf, plan_line_for_dxf)
         label_count = label_feature_count(selected_shp, args.style)
         print(f"지번 라벨 수: {label_count}")
         print("QGIS 프로젝트를 저장하는 중입니다.")
@@ -1724,6 +1811,7 @@ def main():
             "label_count": label_count,
             "parcel_list_count": parcel_list_count,
             "road_count": road_count,
+            "plan_count": plan_count,
             "zone_layers": zone_layers,
             "source_shp": str(source_shp),
             "selected_shp": str(selected_shp),
