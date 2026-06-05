@@ -253,10 +253,9 @@ def build_cadastre_dxf(address, api_key, radius, domain=""):
     bubun, mb = fetch("lp_pa_cbnd_bubun", 1000)
     bonbun, _ = fetch("lp_pa_cbnd_bonbun", 1000)
     zones, _ = fetch("lt_c_uq111", 300)
-    # 추가 레이어: 도시계획시설(도로/교통시설), 실폭도로(차도구간)
+    # 추가 레이어: 도시계획시설(도로/교통시설)
     plan_roads, _ = fetch("lt_c_upisuq151", 1000)        # 도시계획(도로)
     plan_transit, _ = fetch("lt_c_upisuq152", 800)       # 도시계획(교통시설)
-    width_roads, _ = fetch("lt_c_a3drivewaysection", 1000)  # 실폭도로(차도구간)
     truncated = len(bubun) >= mb or len(bonbun) >= mb
 
     doc = ezdxf.new("R2010")
@@ -266,7 +265,7 @@ def build_cadastre_dxf(address, api_key, radius, domain=""):
         pass
     for name, color in [("연속지적_필지", 7), ("지번", 3), ("용도지역", 5), ("용도지역명", 6),
                         ("도시계획_도로", 4), ("도시계획_교통시설", 30), ("도시계획시설명", 6),
-                        ("실폭도로", 8), ("기준점", 1)]:
+                        ("기준점", 1)]:
         if name not in doc.layers:
             doc.layers.add(name, color=color)
     msp = doc.modelspace()
@@ -328,12 +327,6 @@ def build_cadastre_dxf(address, api_key, radius, domain=""):
         if add_feature(feature, "도시계획_교통시설", "도시계획시설명", nm, 2.5) is not None:
             plan_count += 1
 
-    # 실폭도로(차도구간): 면 경계만(라벨 없음)
-    road_count = 0
-    for feature in width_roads:
-        if add_feature(feature, "실폭도로", "실폭도로", "", 0) is not None:
-            road_count += 1
-
     if not parcel_count and not zone_count and fetch_errors:
         raise ValueError(
             "VWorld 데이터(WFS) 조회에 실패했습니다: " + fetch_errors[0]
@@ -355,7 +348,7 @@ def build_cadastre_dxf(address, api_key, radius, domain=""):
     except OSError:
         pass
     return {"data": data, "parcelCount": parcel_count, "zoneCount": zone_count,
-            "planCount": plan_count, "roadCount": road_count,
+            "planCount": plan_count,
             "refined": refined, "radius": int(radius), "truncated": truncated,
             "errors": fetch_errors}
 
@@ -2320,7 +2313,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self.send_header("X-Parcel-Count", str(result["parcelCount"]))
                 self.send_header("X-Zone-Count", str(result["zoneCount"]))
                 self.send_header("X-Plan-Count", str(result.get("planCount", 0)))
-                self.send_header("X-Road-Count", str(result.get("roadCount", 0)))
                 self.send_header("X-Truncated", "1" if result["truncated"] else "0")
                 self.send_header("X-Errors", urllib.parse.quote(" | ".join(result.get("errors") or [])[:400]))
                 self.send_header("Content-Length", str(len(data)))
