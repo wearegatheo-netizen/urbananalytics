@@ -205,15 +205,26 @@ if ($Style) {
     $dryArgs += @("--style", $Style)
 }
 
+# 네이티브(python-qgis.bat)가 stderr(트레이스백)를 쓰면 ErrorActionPreference=Stop이
+# 첫 줄에서 스크립트를 죽여 실제 에러가 가려진다. Continue로 낮춰 전체 출력을 캡처한 뒤
+# 우리가 직접 진단 메시지를 던진다.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $dryRunText = & $qgisPython @dryArgs 2>&1
-$dryRunRaw = $dryRunText -join "`n"
+$dryExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEAP
+$dryRunRaw = ($dryRunText | ForEach-Object { $_.ToString() }) -join "`n"
 $jsonStart = $dryRunRaw.IndexOf("{")
 $jsonEnd = $dryRunRaw.LastIndexOf("}")
-if ($jsonStart -lt 0 -or $jsonEnd -le $jsonStart) {
-    if ($dryRunRaw -match "NOT_FOUND") {
-        throw "Address geocoding failed. Please enter a full address including city/county/district. Example: '서울특별시 강남구 논현동 151-27번지'.`n`n$dryRunRaw"
+# 실패 판정은 종료코드 우선(에러 트레이스백의 파이썬 dict에도 중괄호가 있어 중괄호 유무로는 부족)
+if ($dryExit -ne 0 -or $jsonStart -lt 0 -or $jsonEnd -le $jsonStart) {
+    if ($dryRunRaw -match "INVALID_KEY|등록되지 않은 인증") {
+        throw "VWorld 지오코딩 인증 실패(INVALID_KEY). 입력한 VWorld API 키가 '지오코더(주소→좌표) API'에 등록·승인된 키인지 확인하세요. 웹 위치도는 되는데 여기서만 실패하면, 정식 연속지적에 넘어간 키가 비어있거나 다른 키일 수 있습니다.`n`n$dryRunRaw"
     }
-    throw "Dry-run failed before resource matching.`n`n$dryRunRaw"
+    if ($dryRunRaw -match "NOT_FOUND") {
+        throw "주소 지오코딩 실패. 시/군/구를 포함한 전체 주소로 입력하세요. 예: '서울특별시 강남구 논현동 151-27번지'.`n`n$dryRunRaw"
+    }
+    throw "Dry-run이 리소스 매칭 전에 실패했습니다(종료코드 $dryExit).`n`n$dryRunRaw"
 }
 $dryRunJson = $dryRunRaw.Substring($jsonStart, $jsonEnd - $jsonStart + 1)
 $dryRun = $dryRunJson | ConvertFrom-Json

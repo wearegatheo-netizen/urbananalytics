@@ -1,0 +1,26 @@
+반포동 63-1 반경 1km VWorld 지적 기반 DXF 작성 메모
+
+파일: banpo_63_1_radius_1km_vworld_cadastre_clean_5186.dxf
+주소 보정 결과: 서울특별시 서초구 반포동 63-1
+중심점: WGS84 37.50152164, 127.00254121
+좌표계: EPSG:5186, meter
+반경: 1000m
+필지 도형 수: 2441
+용도지역 도형 수: 48
+WFS 원천별 중복제거 후 피처 수: {'lp_pa_cbnd_bonbun': 456, 'lp_pa_cbnd_bubun': 1990, 'lt_c_uq111': 48}
+WFS 4분할 타일별 totalFeatures: {'lp_pa_cbnd_bonbun': [194, 123, 103, 82], 'lp_pa_cbnd_bubun': [1386, 525, 201, 344], 'lt_c_uq111': [18, 17, 15, 15]}
+WFS 오류: 없음
+
+레이어:
+- PARCEL_BONBUN: 연속지적 본번 필지
+- PARCEL_BUBUN: 연속지적 부번 필지
+- PARCEL_LABEL: 지번 라벨
+- ZONING: 용도지역
+- ZONING_LABEL: 용도지역 라벨
+- CENTER_RADIUS: 기준점 및 1km 반경
+- TEXT_NOTES: 도면 주석
+
+주의:
+- 이 파일은 VWorld 연속지적/용도지역 기반 베이스 도면입니다.
+- 토지이음에 표시되는 건축선 지정선 자체는 별도 고시도면 또는 도시계획/건축선 레이어 확인이 필요합니다.
+- VWorld WFS STARTINDEX 제한 때문에 1km 조회영역을 4분할해 조회했고, PNU 기준으로 중복 제거했습니다.

@@ -1,0 +1,22 @@
+반포동 63-1 반경 1km DXF 작성 메모
+
+파일: banpo_63_1_radius_1km_estimated_building_line.dxf
+중심점: WGS84 37.50105, 127.00185
+기준 위치: 사평대로 160 / 반포동 63-1, 옛 쉐라톤 서울 팔래스 강남 호텔 공개 위치 검색값 기준
+좌표계: 중심점 기준 로컬 미터 좌표
+반경: 1,000m
+도로 중심선 원천: OpenStreetMap Overpass, highway way only
+도로 중심선 개수: 783
+추정 3m 이격선 개수: 878
+
+레이어:
+- CONTROL: 중심 기준점 십자선
+- RADIUS_1KM: 중심점 반경 1km 원
+- OSM_ROAD_CENTERLINE: OSM 도로 중심선
+- EST_BUILDING_LINE_3M_OFFSET: 도로 중심선 양측 3m 평행 추정선
+- TEXT_NOTES: 산출물 주석
+
+중요 한계:
+- EST_BUILDING_LINE_3M_OFFSET 레이어는 OSM 도로 중심선 양측 3m 평행선입니다.
+- 토지이음에 표시되는 법정 건축선, 지적경계선, 도로경계선, 고시 도면선을 대체하지 않습니다.
+- 도면급/인허가 검토용으로 쓰려면 VWorld 연속지적/도시계획 WFS 또는 서초구·서울시 고시도면 PDF/CAD를 기준점 보정해서 다시 작성해야 합니다.
