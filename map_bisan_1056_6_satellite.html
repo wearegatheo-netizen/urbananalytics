@@ -1656,6 +1656,8 @@
         const res = await fetch(`${bridgeBase}/api/geocode?${params.toString()}`);
         const json = await res.json();
         if (!json.ok) throw new Error(json.error || "주소 변환 실패");
+        lastGeo = json;
+        lastGeoAddress = data.address;
         updateMarkers(json.lat, json.lon, data.address, json.refined, data.mapRadius);
         renderPreview(data);
         const keyNote = data.apiKey ? "VWorld API 키 사용" : "API 키 없이 기본 주소 변환 사용";
@@ -1667,6 +1669,59 @@
       } finally {
         setBusy(button, false);
       }
+    }
+
+    // ── 주소·반경 변경 시 '위치도 보기' 없이 자동 반영 ──
+    let lastGeo = null;          // 마지막 지오코딩 결과 {lat, lon, refined}
+    let lastGeoAddress = null;   // 마지막으로 지오코딩한 주소
+    let autoRefreshTimer = null;
+
+    function liveRadius() {
+      const r = Number($("mapRadius").value.trim());
+      return (Number.isFinite(r) && r >= 300 && r <= 20000) ? r : null;
+    }
+
+    function onRadiusInput() {
+      const r = liveRadius();
+      if (r != null && lastGeo) {           // 위치가 잡혀 있으면 원을 즉시 갱신(지오코딩 불필요)
+        circle.setRadius(r);
+        updateRadiusPreview();
+      }
+      scheduleAutoRefresh();
+    }
+
+    function scheduleAutoRefresh() {
+      clearTimeout(autoRefreshTimer);
+      autoRefreshTimer = setTimeout(autoRefreshMap, 700);
+    }
+
+    async function autoRefreshMap() {
+      const address = $("address").value.trim();
+      const r = liveRadius();
+      if (!address || r == null) return;
+      const apiKey = $("apiKey").value.trim();
+      try {
+        if (address !== lastGeoAddress || !lastGeo) {
+          // 주소가 바뀜 → 지오코딩 후 마커/원/라벨 재배치(자동 갱신은 조용히 실패)
+          const params = new URLSearchParams({ address, apiKey });
+          const res = await fetch(`${bridgeBase}/api/geocode?${params.toString()}`);
+          const json = await res.json().catch(() => null);
+          if (!json || !json.ok) return;
+          lastGeo = json;
+          lastGeoAddress = address;
+          updateMarkers(json.lat, json.lon, address, json.refined, r);
+          status(`위치도 자동 갱신\n반경: ${r}m\n좌표: ${json.lat.toFixed(7)}, ${json.lon.toFixed(7)}\n정제 주소: ${json.refined}`);
+        } else {
+          // 반경만 바뀜 → 원만 갱신(재중심 없음)
+          circle.setLatLng([lastGeo.lat, lastGeo.lon]);
+          circle.setRadius(r);
+          updateRadiusPreview();
+        }
+        // 미리보기가 이미 떠 있으면 함께 갱신(디바운스 타이밍에만)
+        if ($("previewBox") && $("previewBox").style.display === "block") {
+          renderPreview(values());
+        }
+      } catch (_) { /* 자동 갱신은 조용히 무시 */ }
     }
 
     let lastPreviewUrl = null;
@@ -2079,6 +2134,10 @@
 
     $("showMap").addEventListener("click", showMap);
     $("downloadMap").addEventListener("click", downloadPng);
+    // 주소·반경을 바꾸면 '위치도 보기' 없이 자동 반영
+    $("mapRadius").addEventListener("input", onRadiusInput);
+    $("address").addEventListener("input", scheduleAutoRefresh);
+    $("address").addEventListener("change", autoRefreshMap);
     $("runCadastre").addEventListener("click", runCadastre);
     $("calculateBlockHeight").addEventListener("click", calculateBlockHeight);
     $("analyzeSelectedParcels").addEventListener("click", analyzeSelectedParcels);
