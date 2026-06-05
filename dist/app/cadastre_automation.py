@@ -1006,6 +1006,41 @@ def force_zone_dxf_colors(dxf_text, zone_style):
     return dxf_text_from_pairs(output)
 
 
+def force_layer_dxf_color(dxf_text, layer_name, aci):
+    """지정 레이어(이름)의 LAYER 정의와 모든 엔티티 색상을 ACI 색번호로 강제(트루컬러 420 제거)."""
+    entity_types = {"LAYER", "HATCH", "LWPOLYLINE", "POLYLINE", "LINE", "TEXT",
+                    "MTEXT", "POINT", "SOLID", "INSERT", "CIRCLE", "ARC"}
+    pairs = dxf_pairs_from_text(dxf_text)
+    output = []
+    idx = 0
+    while idx < len(pairs):
+        code, value = pairs[idx]
+        if code == "0" and value in entity_types:
+            entity = []
+            while idx < len(pairs):
+                if entity and pairs[idx][0] == "0":
+                    break
+                entity.append([pairs[idx][0], pairs[idx][1]])
+                idx += 1
+            is_this = any(p[0] in {"2", "8"} and p[1] == layer_name for p in entity)
+            if is_this:
+                entity = remove_dxf_pairs(entity, "420")  # 트루컬러 제거 → ACI 적용
+                if value == "LAYER":
+                    upsert_dxf_pair(entity, "62", str(aci), after_codes=["2", "70"])
+                elif any(p[0] == "62" for p in entity):
+                    for p in entity:
+                        if p[0] == "62":
+                            p[1] = str(aci)
+                else:
+                    insert_at = entity_common_insert_index(entity)
+                    entity.insert(insert_at, ["62", str(aci)])
+            output.extend(entity)
+            continue
+        output.append([code, value])
+        idx += 1
+    return dxf_text_from_pairs(output)
+
+
 def force_solid_hatch_compatibility(dxf_text):
     pairs = dxf_pairs_from_text(dxf_text)
     output = []
@@ -1397,7 +1432,7 @@ def create_zone_hatch_line_layers(zone_layers, zone_style, spacing=10.0):
     return valid_layers
 
 
-def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone_layers=None, zone_style_path=None, parcel_list_line_shp=None, road_line_shp=None, plan_line_shp=None):
+def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone_layers=None, zone_style_path=None, parcel_list_line_shp=None, road_fill_shp=None, plan_line_shp=None):
     line_layer = QgsVectorLayer(str(line_shp), "cadastre_boundary_lines", "ogr")
     if not line_layer.isValid():
         raise RuntimeError(f"DXF용 라인 레이어를 불러오지 못했습니다: {line_shp}")
@@ -1438,36 +1473,37 @@ def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone
             parcel_list_layer.setRenderer(QgsSingleSymbolRenderer(symbol))
             parcel_list_layer.triggerRepaint()
             export_layers.append(parcel_list_layer)
-    if road_line_shp:
-        road_layer = QgsVectorLayer(str(road_line_shp), "SILPOK_ROAD", "ogr")
+    if road_fill_shp:
+        road_layer = QgsVectorLayer(str(road_fill_shp), "SILPOK_ROAD", "ogr")
         if road_layer.isValid():
             road_layer.setName("SILPOK_ROAD")
-            road_symbol = QgsLineSymbol.createSimple(
+            # 면(해치)로 내보내기 위해 솔리드 채움 심볼 사용(색은 후처리에서 ACI 9로 강제)
+            road_symbol = QgsFillSymbol.createSimple(
                 {
-                    "line_color": "120,120,120,255",
-                    "line_width": "0.25",
-                    "line_width_unit": "MM",
-                    "line_style": "solid",
+                    "color": "150,150,150,255",
+                    "outline_color": "150,150,150,0",
+                    "outline_width": "0",
+                    "style": "solid",
                 }
             )
-            road_symbol.setColor(QColor(120, 120, 120, 255))
+            road_symbol.setColor(QColor(150, 150, 150, 255))
             road_layer.setRenderer(QgsSingleSymbolRenderer(road_symbol))
             road_layer.setLabelsEnabled(False)
             road_layer.triggerRepaint()
-            export_layers.append(road_layer)
+            export_layers.insert(0, road_layer)
     if plan_line_shp:
         plan_layer = QgsVectorLayer(str(plan_line_shp), "URBAN_PLAN_FACILITY", "ogr")
         if plan_layer.isValid():
             plan_layer.setName("URBAN_PLAN_FACILITY")
             plan_symbol = QgsLineSymbol.createSimple(
                 {
-                    "line_color": "0,160,160,255",
+                    "line_color": "255,0,0,255",
                     "line_width": "0.3",
                     "line_width_unit": "MM",
-                    "line_style": "dash",
+                    "line_style": "solid",
                 }
             )
-            plan_symbol.setColor(QColor(0, 160, 160, 255))
+            plan_symbol.setColor(QColor(255, 0, 0, 255))
             plan_layer.setRenderer(QgsSingleSymbolRenderer(plan_symbol))
             plan_layer.setLabelsEnabled(False)
             plan_layer.triggerRepaint()
@@ -1553,9 +1589,13 @@ def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone
     for old, new in replacements.items():
         dxf_text = dxf_text.replace(old, new)
     dxf_text = force_zone_dxf_colors(dxf_text, zone_style)
+    # 레이어별 ACI 색상/지번 글씨 강제(사용자 지정)
+    dxf_text = force_layer_dxf_color(dxf_text, "JIBUN", 250)        # 지번 색상 250
+    dxf_text = force_layer_dxf_color(dxf_text, "실폭도로", 9)        # 실폭도로 해치 색상 9
+    dxf_text = force_layer_dxf_color(dxf_text, "도시계획시설", 1)     # 도시계획시설 빨강(1)
     dxf_text = force_solid_hatch_compatibility(dxf_text)
     dxf_text = remove_non_text_entities_from_layer(dxf_text, "JIBUN")
-    dxf_text = force_layer_text_height(dxf_text, "JIBUN", 2.0)
+    dxf_text = force_layer_text_height(dxf_text, "JIBUN", 1)        # 지번 글씨크기 1
     dxf_text = force_text_style_font(dxf_text)
     dxf_text = force_dxf_codepage(dxf_text)
     with Path(dxf_path).open("w", encoding="cp949", errors="replace", newline="") as f:
@@ -1761,8 +1801,8 @@ def main():
                         "selected_shp": str(zone_selected_shp),
                     }
                 )
-        # 실폭도로(도로명주소 Z_KAIS_TL_SPRD_RW): 반경 클립 → 면 경계선 → '실폭도로' 레이어
-        road_line_for_dxf = None
+        # 실폭도로(도로명주소 Z_KAIS_TL_SPRD_RW): 반경 클립 → '실폭도로' 면(해치) 레이어
+        road_fill_for_dxf = None
         road_count = 0
         if args.road_zip and Path(args.road_zip).exists():
             print("실폭도로(도로명주소) SHP를 반경 안에서 선택하는 중입니다.")
@@ -1771,9 +1811,7 @@ def main():
             road_count = export_zone_within_radius(road_source_shp, x, y, args.radius, road_selected_shp)
             print(f"실폭도로 선택 개수: {road_count}")
             if road_count > 0:
-                road_line_shp = result_dir / f"{stem}_{r_label}_silpok_lines.shp"
-                export_polygon_boundaries_to_lines(road_selected_shp, road_line_shp)
-                road_line_for_dxf = road_line_shp
+                road_fill_for_dxf = road_selected_shp  # 면 그대로 → DXF 해치
         elif args.road_zip:
             print(f"실폭도로 ZIP 경로를 찾지 못해 건너뜁니다: {args.road_zip}")
 
@@ -1791,7 +1829,7 @@ def main():
                 print(f"도시계획시설 처리를 건너뜁니다(계속 진행): {plan_exc}")
 
         print("연속지적 라인과 용도지역 해치 DXF를 만드는 중입니다.")
-        dxf_path = apply_style_and_export_dxf(line_shp, selected_shp, args.style, dxf_path, zone_layers, args.zone_style, parcel_list_line_for_dxf, road_line_for_dxf, plan_line_for_dxf)
+        dxf_path = apply_style_and_export_dxf(line_shp, selected_shp, args.style, dxf_path, zone_layers, args.zone_style, parcel_list_line_for_dxf, road_fill_for_dxf, plan_line_for_dxf)
         label_count = label_feature_count(selected_shp, args.style)
         print(f"지번 라벨 수: {label_count}")
         print("QGIS 프로젝트를 저장하는 중입니다.")

@@ -486,6 +486,35 @@ if (-not $profilePath) {
     $profilePath = Join-Path $DownloadDir "..\chrome_vworld_profile"
 }
 New-Item -ItemType Directory -Force -Path $profilePath | Out-Null
+
+# 다운로드 시 '다른 이름으로 저장' 대화상자 방지: Chrome 프로필 Preferences에 자동저장 설정을 심는다.
+# (CDP setDownloadBehavior가 새 타깃/탭에서 안 먹는 경우까지 커버하는 프로필 레벨 설정)
+try {
+    $prefDir = Join-Path $profilePath "Default"
+    New-Item -ItemType Directory -Force -Path $prefDir | Out-Null
+    $prefFile = Join-Path $prefDir "Preferences"
+    $prefObj = $null
+    if (Test-Path -LiteralPath $prefFile) {
+        try { $prefObj = (Get-Content -LiteralPath $prefFile -Raw -Encoding UTF8) | ConvertFrom-Json } catch { $prefObj = $null }
+    }
+    if (-not $prefObj) { $prefObj = New-Object psobject }
+    if (-not ($prefObj.PSObject.Properties.Name -contains 'download')) {
+        $prefObj | Add-Member -NotePropertyName 'download' -NotePropertyValue (New-Object psobject) -Force
+    }
+    $prefObj.download | Add-Member -NotePropertyName 'prompt_for_download' -NotePropertyValue $false -Force
+    $prefObj.download | Add-Member -NotePropertyName 'default_directory' -NotePropertyValue $downloadPath -Force
+    $prefObj.download | Add-Member -NotePropertyName 'directory_upgrade' -NotePropertyValue $true -Force
+    if (-not ($prefObj.PSObject.Properties.Name -contains 'savefile')) {
+        $prefObj | Add-Member -NotePropertyName 'savefile' -NotePropertyValue (New-Object psobject) -Force
+    }
+    $prefObj.savefile | Add-Member -NotePropertyName 'default_directory' -NotePropertyValue $downloadPath -Force
+    $prefJson = $prefObj | ConvertTo-Json -Depth 60 -Compress
+    # Chrome Preferences는 UTF-8(BOM 없음)이어야 한다.
+    [System.IO.File]::WriteAllText($prefFile, $prefJson, (New-Object System.Text.UTF8Encoding $false))
+} catch {
+    Write-Output "다운로드 자동저장 설정(Preferences) 적용 경고(계속 진행): $($_.Exception.Message)"
+}
+
 $downloadStart = Get-Date
 
 $detailUrl = "https://www.vworld.kr/dtmk/dtmk_ntads_s002.do?svcCde=MK&dsId=$PageDsId&pageIndex=$PageIndex"
@@ -530,9 +559,11 @@ Send-Cdp -Socket $socket -Method "Runtime.enable" | Out-Null
 Send-Cdp -Socket $socket -Method "Network.enable" | Out-Null
 Install-VWorldAutomationHooks -Socket $socket
 try {
+    # eventsEnabled=true: 새 타깃/탭에서 시작되는 다운로드까지 브라우저 전역으로 자동저장
     Send-Cdp -Socket $socket -Method "Browser.setDownloadBehavior" -Params @{
         behavior = "allow"
         downloadPath = $downloadPath
+        eventsEnabled = $true
     } | Out-Null
 } catch {
     Send-Cdp -Socket $socket -Method "Page.setDownloadBehavior" -Params @{
