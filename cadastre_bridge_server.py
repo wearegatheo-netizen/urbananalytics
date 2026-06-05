@@ -1546,8 +1546,9 @@ def draw_radius_ring(draw, cx, cy, pixel_radius, label, font, canvas_size, scale
     dash = 1.2 if primary else 1.0
     gap = 1.2 if primary else 1.0
     box = (cx - pixel_radius, cy - pixel_radius, cx + pixel_radius, cy + pixel_radius)
-    draw_dashed_ellipse(draw, box, (20, 20, 20, 230), width=outline_width, dash_degrees=dash, gap_degrees=gap)
-    draw_dashed_ellipse(draw, box, (255, 255, 255, 245), width=line_width, dash_degrees=dash, gap_degrees=gap)
+    # 흰 헤일로(어두운 위성 위 가독성) + 블루 선(UI 기본색 #1b4f9c와 통일)
+    draw_dashed_ellipse(draw, box, (255, 255, 255, 235), width=outline_width, dash_degrees=dash, gap_degrees=gap)
+    draw_dashed_ellipse(draw, box, (27, 79, 156, 255), width=line_width, dash_degrees=dash, gap_degrees=gap)
 
     bbox = draw.textbbox((0, 0), label, font=font)
     label_w = bbox[2] - bbox[0]
@@ -1614,9 +1615,9 @@ def make_satellite_map(address, api_key, width=3200, height=2000, radius=3000, s
                 scale=scale,
                 primary=bool(ring_values and ring_radius_m == ring_values[-1]),
             )
-    dot_r = max(18, round(18 * scale))
-    dot_w = max(5, round(5 * scale))
-    draw.ellipse((cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r), fill=(230, 0, 18, 235), outline=(255, 255, 255, 255), width=dot_w)
+    dot_r = max(11, round(11 * scale))
+    dot_w = max(4, round(4 * scale))
+    draw.ellipse((cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r), fill=(27, 79, 156, 240), outline=(255, 255, 255, 255), width=dot_w)
 
     if show_facilities:
         try:
