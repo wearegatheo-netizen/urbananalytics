@@ -1050,6 +1050,41 @@
           </div>
         </div>
       </details>
+
+      <details class="card" id="cardSurvey">
+        <summary><span class="summary-ico">📋</span><span class="summary-title">필지 조서</span><span class="chev">▾</span></summary>
+        <div class="card-body">
+          <p class="hint">지도에서 선택한 필지들의 <b>지번·지목·공부면적·용도지역·개별공시지가</b>를 조서(엑셀)로 뽑습니다. 공시지가액 = 면적(공부 우선) × 개별공시지가. (VWorld 토지특성, 추가 키 불필요)</p>
+          <div class="field pick-block">
+            <label class="checkbox-row"><input class="js-pickmode" type="checkbox">위치도에서 지번 클릭 선택</label>
+            <div class="pick-list-head">지도 선택 필지 <strong class="js-pick-count">0</strong>개</div>
+            <div class="parcel-list js-parcel-list"></div>
+            <div class="pick-tools">
+              <button class="small-button ghost js-select-all" type="button">전체 선택</button>
+              <button class="small-button js-clear-picks" type="button">전체 지우기</button>
+            </div>
+          </div>
+          <div class="actions" style="grid-template-columns:1fr">
+            <button id="makeSurvey" type="button">조서 만들기</button>
+          </div>
+          <div id="surveyResult" class="height-result">
+            <div class="result-summary">
+              <div class="metric"><span>필지 수</span><strong id="surveyCount">-</strong></div>
+              <div class="metric"><span>공부면적 합</span><strong id="surveyRegArea">-</strong></div>
+              <div class="metric"><span>공시지가액 합</span><strong id="surveyJigaTotal">-</strong></div>
+            </div>
+            <div class="height-table-wrap">
+              <table class="height-table">
+                <thead>
+                  <tr><th>연번</th><th>소재지</th><th>지번</th><th>지목</th><th>공부면적</th><th>용도지역</th><th>공시지가</th><th>공시지가액</th></tr>
+                </thead>
+                <tbody id="surveyBody"></tbody>
+              </table>
+            </div>
+            <button id="downloadSurvey" class="small-button" type="button">조서 엑셀 다운로드</button>
+          </div>
+        </div>
+      </details>
     </div>
   </section>
 
@@ -1989,6 +2024,70 @@
       }
     }
 
+    // ── 필지 조서 ──
+    let lastSurvey = null;
+    async function makeSurvey() {
+      const button = $("makeSurvey");
+      try {
+        const data = values();
+        if (!data.apiKey) throw new Error("필지 조서에는 VWorld API 키가 필요합니다.");
+        if (!pickedParcels.length) throw new Error("지도에서 필지를 먼저 선택해 주세요.");
+        if (!(await checkBridge())) return;
+        setBusy(button, true, "조서 생성 중...");
+        status("선택 필지의 지번·지목·면적·용도지역·공시지가를 조회하는 중입니다...");
+        const payload = { apiKey: data.apiKey, parcelListItems: pickedParcels.map((it) => ({ parcel: it.parcel, lat: it.lat, lon: it.lon })) };
+        const res = await fetch(`${bridgeBase}/api/parcel-survey`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || "조서 생성 실패");
+        lastSurvey = json;
+        renderSurvey(json);
+        status(`필지 조서 생성 완료\n필지 ${json.totals.count}개\n공부면적 합 ${numberText(json.totals.regArea, 1)}㎡\n공시지가액 합 ${Number(json.totals.jigaTotal || 0).toLocaleString()}원`);
+      } catch (error) {
+        status(error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    }
+    function renderSurvey(json) {
+      $("surveyResult").style.display = "block";
+      $("surveyCount").textContent = `${json.totals.count} 필지`;
+      $("surveyRegArea").textContent = `${numberText(json.totals.regArea, 1)} ㎡`;
+      $("surveyJigaTotal").textContent = `${Number(json.totals.jigaTotal || 0).toLocaleString()} 원`;
+      $("surveyBody").innerHTML = (json.rows || []).map((r) => `
+        <tr title="${escapeHtml(r.pnu || "")}">
+          <td>${r.no}</td>
+          <td style="text-align:left">${escapeHtml(r.addr || "")}</td>
+          <td>${escapeHtml(r.jibun || "")}</td>
+          <td>${escapeHtml(r.jimok || "")}</td>
+          <td title="${r.regArea != null ? "공부면적" : "도형 " + numberText(r.geomArea, 1)}">${r.regArea != null ? numberText(r.regArea, 1) : (r.geomArea != null ? numberText(r.geomArea, 1) + "*" : "—")}</td>
+          <td style="text-align:left">${escapeHtml(r.zone || "-")}</td>
+          <td>${r.jiga != null ? Number(r.jiga).toLocaleString() : "—"}</td>
+          <td>${r.jigaTotal != null ? Number(r.jigaTotal).toLocaleString() : "—"}</td>
+        </tr>`).join("");
+    }
+    async function downloadSurvey() {
+      if (!lastSurvey || !(lastSurvey.rows || []).length) { status("먼저 ‘조서 만들기’를 눌러 주세요."); return; }
+      const button = $("downloadSurvey");
+      try {
+        if (!(await checkBridge())) return;
+        setBusy(button, true, "생성 중...");
+        const res = await fetch(`${bridgeBase}/api/parcel-survey-report`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: lastSurvey.rows, totals: lastSurvey.totals }) });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "조서 엑셀 생성 실패"); }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `필지조서_${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}.xlsx`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        status("필지 조서 엑셀 다운로드를 시작했습니다.");
+      } catch (error) {
+        status(error.message);
+      } finally {
+        setBusy(button, false);
+      }
+    }
+
     async function downloadHeightReport() {
       if (!lastHeightRows.length) {
         status("먼저 블록별 평균높이를 산정해 주세요.");
@@ -2147,6 +2246,8 @@
     $("calculateBlockHeight").addEventListener("click", calculateBlockHeight);
     $("analyzeSelectedParcels").addEventListener("click", analyzeSelectedParcels);
     $("downloadHeightCsv").addEventListener("click", downloadHeightReport);
+    $("makeSurvey").addEventListener("click", makeSurvey);
+    $("downloadSurvey").addEventListener("click", downloadSurvey);
     // 중심지 위계 선택 → 허용 조정범위 안내 + 입력값 클램프
     const CENTER_RANK_MAX = { "광역중심": 30, "지역중심": 25, "지구중심": 20, "생활권중심": 15, "그 외": 10 };
     function syncCenterRankHint() {

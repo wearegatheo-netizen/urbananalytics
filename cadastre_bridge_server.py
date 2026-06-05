@@ -1017,33 +1017,36 @@ def clamp_center_pct(center_rank, requested_pct):
     return max(-rng, min(rng, pct))
 
 
-def fetch_registered_area(pnu, api_key, domain=""):
-    """VWorld NED 토지특성정보(getLandCharacteristics)에서 PNU의 공부면적(토지면적, lndpclAr, ㎡)을
-    최신 기준연도 기준으로 반환. 실패/없음이면 None(같은 VWorld 키 사용)."""
+def fetch_land_characteristics(pnu, api_key, domain=""):
+    """VWorld NED 토지특성정보(getLandCharacteristics)에서 PNU의 '최신 기준연도' 레코드를 반환.
+    지목·공부면적·용도지역·개별공시지가·이용상황 등 포함. 실패/없음이면 {} (같은 VWorld 키)."""
     pnu = str(pnu or "").strip()
     if not api_key or not pnu:
-        return None
-    params = {"key": api_key, "pnu": pnu, "format": "json", "numOfRows": "30", "pageNo": "1"}
+        return {}
+    params = {"key": api_key, "pnu": pnu, "format": "json", "numOfRows": "50", "pageNo": "1"}
     dom = domain or current_vworld_domain()
     if dom:
         params["domain"] = dom
     try:
         data = http_get_json("https://api.vworld.kr/ned/data/getLandCharacteristics", params, retries=2)
     except Exception:
-        return None
+        return {}
     fields = (data.get("landCharacteristicss") or {}).get("field")
     if isinstance(fields, dict):
         fields = [fields]
     if not fields:
-        return None
-    best = None
-    for f in fields:
-        ar = parse_float(f.get("lndpclAr"))
-        if ar and ar > 0:
-            yr = str(f.get("stdrYear") or "")
-            if best is None or yr >= best[0]:
-                best = (yr, ar)
-    return best[1] if best else None
+        return {}
+    # 기준연도(stdrYear)+기준월(stdrMt)이 가장 최신인 레코드
+    def key_of(f):
+        return (str(f.get("stdrYear") or ""), str(f.get("stdrMt") or ""))
+    return max(fields, key=key_of)
+
+
+def fetch_registered_area(pnu, api_key, domain=""):
+    """공부면적(토지면적, lndpclAr, ㎡) — 최신 토지특성 레코드 기준. 없으면 None."""
+    rec = fetch_land_characteristics(pnu, api_key, domain)
+    ar = parse_float(rec.get("lndpclAr")) if rec else None
+    return ar if (ar and ar > 0) else None
 
 
 def analyze_selected_parcels(payload):
@@ -2062,6 +2065,144 @@ def _fmt_num(value, digits=2):
         return "-"
 
 
+def build_parcel_survey(payload):
+    """지도에서 선택한 필지들의 토지 조서(지번·지목·면적·용도지역·공시지가)를 생성."""
+    api_key = str(payload.get("apiKey") or "").strip()
+    if not api_key:
+        raise ValueError("필지 조서에는 VWorld API 키가 필요합니다.")
+    items = payload.get("parcelListItems") or []
+    if not items:
+        raise ValueError("지도에서 필지를 먼저 선택해 주세요.")
+    use_char = payload.get("useLandChar", True) is not False
+    rows = []
+    for idx, item in enumerate(items, 1):
+        m_lat = float(item.get("lat"))
+        m_lon = float(item.get("lon"))
+        feature = get_parcel_feature(m_lat, m_lon, api_key)["features"][0]
+        props = feature.get("properties") or {}
+        pnu = str(props.get("pnu") or "").strip()
+        ring = primary_ring(feature)
+        geom_area = abs(projected_polygon_area(project_ring(ring))) if ring else None
+        rec = fetch_land_characteristics(pnu, api_key) if (use_char and pnu) else {}
+        reg_area = parse_float(rec.get("lndpclAr"))
+        jiga = parse_float(rec.get("pblntfPclnd"))
+        z1 = str(rec.get("prposArea1Nm") or "").strip()
+        z2 = str(rec.get("prposArea2Nm") or "").strip()
+        zone = z1 + (f" / {z2}" if z2 and z2 != "지정되지않음" else "")
+        jibun_raw = str(props.get("jibun") or "").strip()      # 예: "161-7 대"
+        parts = jibun_raw.split()
+        jibun_no = parts[0] if parts else f"{props.get('bonbun', '')}-{props.get('bubun', '')}".strip("-")
+        jimok = str(rec.get("lndcgrCodeNm") or (parts[1] if len(parts) > 1 else "")).strip()
+        sido = str(props.get("ctp_nm") or "").strip()
+        sgg = str(props.get("sig_nm") or "").strip()
+        emd = str(props.get("emd_nm") or "").strip()
+        addr = str(props.get("addr") or "").strip() or " ".join(x for x in [sido, sgg, emd, jibun_no] if x)
+        area_for_value = reg_area if reg_area else geom_area
+        rows.append({
+            "no": idx,
+            "addr": addr, "sido": sido, "sigungu": sgg, "emd": emd,
+            "jibun": jibun_no, "jimok": jimok or "-", "pnu": pnu,
+            "regArea": round(reg_area, 2) if reg_area else None,
+            "geomArea": round(geom_area, 2) if geom_area else None,
+            "zone": zone or "-",
+            "jiga": int(round(jiga)) if jiga else None,
+            "jigaTotal": int(round(jiga * area_for_value)) if (jiga and area_for_value) else None,
+            "useSittn": str(rec.get("ladUseSittnNm") or "").strip(),
+            "year": str(rec.get("stdrYear") or "").strip(),
+        })
+    totals = {
+        "count": len(rows),
+        "regArea": round(sum(r["regArea"] or 0 for r in rows), 2),
+        "geomArea": round(sum(r["geomArea"] or 0 for r in rows), 2),
+        "jigaTotal": sum(r["jigaTotal"] or 0 for r in rows),
+    }
+    return {"rows": rows, "totals": totals}
+
+
+def build_parcel_survey_xlsx(payload):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    rows = payload.get("rows") or []
+    totals = payload.get("totals") or {}
+    if not rows:
+        raise ValueError("조서로 만들 선택 필지가 없습니다. 먼저 필지를 선택해 주세요.")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "필지조서"
+    title_font = Font(bold=True, size=14, color="14301F")
+    legend_font = Font(size=9, color="555555")
+    head_font = Font(bold=True, color="FFFFFF", size=10)
+    head_fill = PatternFill("solid", fgColor="1B4F9C")
+    total_fill = PatternFill("solid", fgColor="EAF3EC")
+    thin = Side(style="thin", color="D9D9D9")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center")
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    num_fmt = "#,##0.00"
+    int_fmt = "#,##0"
+
+    ws["A1"] = "필지 조서(토지조서)"
+    ws["A1"].font = title_font
+    ws["A2"] = f"생성: {time.strftime('%Y-%m-%d %H:%M')}   ·   필지 수 = {len(rows)}   ·   출처: VWorld 연속지적·토지특성"
+    ws["A2"].font = legend_font
+    ws["A3"] = "※ 공부면적·지목·용도지역·개별공시지가는 토지특성(기준연도) 기준, 도형면적은 연속지적 폴리곤 계산값. 공시지가액 = (공부면적 있으면 공부, 없으면 도형) × 개별공시지가."
+    ws["A3"].font = legend_font
+
+    header_row = 5
+    headers = ["연번", "소재지", "지번", "지목", "공부면적(㎡)", "도형면적(㎡)",
+               "용도지역", "개별공시지가(원/㎡)", "공시지가액(원)", "이용상황", "기준연도", "PNU"]
+    for c, text in enumerate(headers, 1):
+        cell = ws.cell(row=header_row, column=c, value=text)
+        cell.font = head_font
+        cell.fill = head_fill
+        cell.alignment = center
+        cell.border = border
+    num_cols = {5, 6, 8, 9}
+    for i, row in enumerate(rows):
+        rr = header_row + 1 + i
+        vals = [row.get("no"), row.get("addr"), row.get("jibun"), row.get("jimok"),
+                parse_float(row.get("regArea")), parse_float(row.get("geomArea")),
+                row.get("zone"), row.get("jiga"), row.get("jigaTotal"),
+                row.get("useSittn"), row.get("year"), row.get("pnu")]
+        for c, v in enumerate(vals, 1):
+            cell = ws.cell(row=rr, column=c, value=v)
+            cell.border = border
+            if c in num_cols:
+                cell.number_format = num_fmt if c in (5, 6) else int_fmt
+                cell.alignment = right
+            elif c == 1:
+                cell.alignment = center
+            else:
+                cell.alignment = left
+    tr = header_row + 1 + len(rows)
+    ws.cell(row=tr, column=1, value="합계").font = Font(bold=True)
+    ws.cell(row=tr, column=5, value=parse_float(totals.get("regArea")))
+    ws.cell(row=tr, column=6, value=parse_float(totals.get("geomArea")))
+    ws.cell(row=tr, column=9, value=totals.get("jigaTotal"))
+    for c in range(1, len(headers) + 1):
+        cell = ws.cell(row=tr, column=c)
+        cell.border = border
+        cell.fill = total_fill
+        if c in (5, 6):
+            cell.number_format = num_fmt
+            cell.font = Font(bold=True)
+            cell.alignment = right
+        if c == 9:
+            cell.number_format = int_fmt
+            cell.font = Font(bold=True)
+            cell.alignment = right
+    widths = [6, 30, 10, 7, 12, 12, 20, 16, 16, 12, 9, 22]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 def build_height_report_xlsx(payload):
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -2454,6 +2595,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/analyze-selected-parcels":
                 result = analyze_selected_parcels(payload)
                 json_response(self, {"ok": True, **result})
+                return
+            if parsed.path == "/api/parcel-survey":
+                result = build_parcel_survey(payload)
+                json_response(self, {"ok": True, **result})
+                return
+            if parsed.path == "/api/parcel-survey-report":
+                data = build_parcel_survey_xlsx(payload)
+                cors_headers(self, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                filename = urllib.parse.quote(f"parcel_survey_{time.strftime('%Y%m%d_%H%M%S')}.xlsx")
+                self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{filename}")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
                 return
             if parsed.path == "/api/select-folder":
                 if WEB_MODE:
