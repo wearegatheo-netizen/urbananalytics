@@ -841,7 +841,7 @@
         <summary><span class="summary-ico">🗺️</span><span class="summary-title">연속지적 및 용도지역</span><span class="chev">▾</span></summary>
         <div class="card-body">
           <p class="hint">같은 ‘연속지적+용도지역’이지만 <b>데이터 출처·완전성</b>이 다릅니다. 둘 다 VWorld API 키가 필요합니다.<br>
-            • <b>DXF 빠른추출(웹)</b> — VWorld API로 반경 내 필지+용도지역을 즉시 DXF(EPSG:5186)로. <b>최대 1,000필지</b>(넓으면 일부 누락), QGIS·로그인 불필요, 어디서나 동작. <i>빠른 확인·소규모용.</i><br>
+            • <b>DXF 빠른추출(웹)</b> — VWorld API로 반경 내 <b>필지·용도지역·도시계획시설(도로·교통)·실폭도로</b>를 즉시 DXF(EPSG:5186, 레이어 분리)로. <b>최대 1,000필지</b>(넓으면 일부 누락), QGIS·로그인 불필요, 어디서나 동작. <i>빠른 확인·소규모용.</i><br>
             • <b>정식 연속지적(QGIS)</b> — VWorld 공식 원본 셰이프를 받아 QGIS로 정밀 처리. <b>전수(누락 없음)</b> + 지번·용도지역 라벨·QGIS 프로젝트까지 저장 폴더에 생성. <i>QGIS 설치+VWorld 로그인 필요(이 PC 전용)·정식 도면작업용.</i></p>
           <div class="row">
             <div class="field">
@@ -2042,6 +2042,8 @@
         }
         const parcels = res.headers.get("X-Parcel-Count");
         const zones = res.headers.get("X-Zone-Count");
+        const plans = res.headers.get("X-Plan-Count") || "0";
+        const roads = res.headers.get("X-Road-Count") || "0";
         const truncated = res.headers.get("X-Truncated") === "1";
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -2052,7 +2054,7 @@
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
-        status(`연속지적 DXF 다운로드를 시작했습니다.\n필지 ${parcels}개 · 용도지역 ${zones}개 (EPSG:5186)`
+        status(`연속지적 DXF 다운로드를 시작했습니다. (EPSG:5186)\n필지 ${parcels} · 용도지역 ${zones} · 도시계획시설(도로·교통) ${plans} · 실폭도로 ${roads}`
           + (truncated ? "\n※ 범위가 넓어 일부 필지가 누락됐을 수 있습니다. 반경을 줄여보세요." : ""));
       } catch (error) {
         status(error.message);
