@@ -267,6 +267,28 @@ foreach ($zone in $zoneSpecs) {
     Write-Host "용도지역 ZIP 다운로드 완료: $($zoneZip.FullName)"
     $zoneZipArgs += @("--zone-zip", "$($zone.Key)=$($zoneZip.FullName)")
 }
+
+# 도로명주소 실폭도로(시도별 SHP, Z_KAIS_TL_SPRD_RW) — dry-run이 찾아준 리소스를 다운로드
+$roadZipArgs = @()
+if ($dryRun.road_download_href) {
+    $roadFileNoMatch = [regex]::Match([string]$dryRun.road_download_href, 'fileNo=(\d+)')
+    if ($roadFileNoMatch.Success) {
+        $roadFileNo = $roadFileNoMatch.Groups[1].Value
+        $roadExpected = ([string]$dryRun.road_resource) -replace "\s+데이터\s+SHP$", ""
+        Write-Host "[3.5] 도로명주소 실폭도로 ZIP을 다운로드하는 중입니다: $($dryRun.road_resource)"
+        $roadDownloadDir = Join-Path $OutDir "browser_downloads\silpok"
+        try {
+            $roadZip = Invoke-VWorldDownload -DsId "30057" -PageDsId "30057" -FileNo $roadFileNo -DownloadHref ([string]$dryRun.road_download_href) -ExpectedFileName $roadExpected -DownloadDir $roadDownloadDir -ProfileDir $profileDir -VWorldId $VWorldId -VWorldPassword $VWorldPassword
+            Write-Host "실폭도로 ZIP 다운로드 완료: $($roadZip.FullName)"
+            $roadZipArgs += @("--road-zip", $roadZip.FullName)
+        } catch {
+            Write-Host "실폭도로 다운로드를 건너뜁니다(계속 진행): $($_.Exception.Message)"
+        }
+    }
+} else {
+    Write-Host "실폭도로 리소스를 찾지 못해 건너뜁니다(시도 매칭 실패 가능)."
+}
+
 Write-Host "[4/6] QGIS에서 SHP를 읽고 입력 주소 반경 안의 필지와 용도지역을 선택하는 중입니다."
 Write-Host "[5/6] 선택 필지를 CAD용 경계선으로 바꾸고 지번/용도지역 라벨을 준비하는 중입니다."
 Write-Host "[6/6] 용도지역이 포함된 DXF와 QGIS 프로젝트를 저장하는 중입니다."
@@ -290,6 +312,7 @@ if ($Style) {
     $processArgs += @("--style", $Style)
 }
 $processArgs += $zoneZipArgs
+$processArgs += $roadZipArgs
 
 & $qgisPython @processArgs
 Write-Host "완료되었습니다. 결과 저장 위치: $OutDir"

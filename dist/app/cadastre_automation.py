@@ -52,6 +52,9 @@ PARCEL_LIST_LAYER_NAME = "엑셀선택지번"
 DEFAULT_OUT_DIR = Path.cwd() / "outputs"
 DATASET_ID_5174 = "30564"
 DATASET_INDEX_URL = "https://data.edmgr.kr/dataView.do?id=vworld_open_30564"
+# 도로명주소 실폭도로(시도별 SHP, Z_KAIS_TL_SPRD_RW 포함)
+ROAD_DATASET_ID = "30057"
+ROAD_INDEX_URL = "https://data.edmgr.kr/dataView.do?id=vworld_open_30057"
 VWORLD_DOWNLOAD_URL = "https://www.vworld.kr/dtmk/downloadResourceFile.do"
 VWORLD_GEOCODE_URL = "https://api.vworld.kr/req/address"
 ZONE_DEFINITIONS = {
@@ -331,6 +334,51 @@ def match_resource(resources, sido, sigungu):
     if not candidates:
         raise ValueError(f"다운로드 리소스를 찾지 못했습니다: {sido} {sigungu or ''}".strip())
     return candidates[0]
+
+
+def load_road_resource_index(cache_path):
+    """도로명주소 실폭도로(시도별) 다운로드 리소스 목록. 라벨 '실폭도로_{시도}.zip 데이터 SHP'와
+    가장 가까운(뒤) fileNo 링크를 매핑한다(이 페이지는 라벨이 <a> 밖에 있어 정규식으로 추출)."""
+    if cache_path.exists():
+        return json.loads(cache_path.read_text(encoding="utf-8"))
+    html = http_get_text(ROAD_INDEX_URL)
+    labels = [(m.start(), m.group(0)) for m in re.finditer(r"실폭도로_[^<\s]+\.zip[^<]*SHP", html)]
+    links = sorted((m.start(), m.group(1))
+                   for m in re.finditer(r"downloadResourceFile\.do\?ds_id=" + ROAD_DATASET_ID + r"&fileNo=(\d+)", html))
+    resources = []
+    for lpos, label in labels:
+        after = [(p, fn) for p, fn in links if p >= lpos]
+        if not after:
+            continue
+        fn = after[0][1]
+        href = f"{VWORLD_DOWNLOAD_URL}?ds_id={ROAD_DATASET_ID}&fileNo={fn}"
+        resources.append({"label": " ".join(label.split()), "href": href})
+    if not resources:
+        raise RuntimeError("도로명주소 실폭도로 다운로드 리소스 목록을 찾지 못했습니다.")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(resources, ensure_ascii=False, indent=2), encoding="utf-8")
+    return resources
+
+
+def match_road_resource(resources, sido):
+    """'실폭도로_{시도}.zip'에서 시도를 정규화해 매칭(전북특별자치도→전북, 세종→세종시 등)."""
+    for item in resources:
+        m = re.search(r"실폭도로_([^.]+)\.zip", item["label"])
+        if m and normalize_region_name(m.group(1).strip()) == sido:
+            return item
+    return None
+
+
+def extract_zip_find(zip_path, extract_dir, name_contains):
+    """ZIP을 풀고 이름에 name_contains를 포함하는 .shp를 우선 반환(없으면 첫 .shp)."""
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(extract_dir)
+    shps = list(extract_dir.rglob("*.shp"))
+    if not shps:
+        raise FileNotFoundError(f"SHP 파일을 찾지 못했습니다: {extract_dir}")
+    matched = [s for s in shps if name_contains.lower() in s.name.lower()]
+    return (matched or shps)[0]
 
 
 def download_resource(resource, target_dir):
@@ -1294,7 +1342,7 @@ def create_zone_hatch_line_layers(zone_layers, zone_style, spacing=10.0):
     return valid_layers
 
 
-def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone_layers=None, zone_style_path=None, parcel_list_line_shp=None):
+def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone_layers=None, zone_style_path=None, parcel_list_line_shp=None, road_line_shp=None):
     line_layer = QgsVectorLayer(str(line_shp), "cadastre_boundary_lines", "ogr")
     if not line_layer.isValid():
         raise RuntimeError(f"DXF용 라인 레이어를 불러오지 못했습니다: {line_shp}")
@@ -1335,6 +1383,23 @@ def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone
             parcel_list_layer.setRenderer(QgsSingleSymbolRenderer(symbol))
             parcel_list_layer.triggerRepaint()
             export_layers.append(parcel_list_layer)
+    if road_line_shp:
+        road_layer = QgsVectorLayer(str(road_line_shp), "SILPOK_ROAD", "ogr")
+        if road_layer.isValid():
+            road_layer.setName("SILPOK_ROAD")
+            road_symbol = QgsLineSymbol.createSimple(
+                {
+                    "line_color": "120,120,120,255",
+                    "line_width": "0.25",
+                    "line_width_unit": "MM",
+                    "line_style": "solid",
+                }
+            )
+            road_symbol.setColor(QColor(120, 120, 120, 255))
+            road_layer.setRenderer(QgsSingleSymbolRenderer(road_symbol))
+            road_layer.setLabelsEnabled(False)
+            road_layer.triggerRepaint()
+            export_layers.append(road_layer)
     for zone in zone_layers:
         config = ZONE_DEFINITIONS[zone["key"]]
         zone_polygon_layer = QgsVectorLayer(str(zone["selected_shp"]), config["line_layer"], "ogr")
@@ -1410,6 +1475,7 @@ def apply_style_and_export_dxf(line_shp, polygon_shp, style_path, dxf_path, zone
         "cadastre_boundary_lines": "CADASTRE_LINE",
         "cadastre_label_source": "JIBUN",
         "zone_source": "ZONE",
+        "SILPOK_ROAD": "실폭도로",
     }
     for old, new in replacements.items():
         dxf_text = dxf_text.replace(old, new)
@@ -1494,6 +1560,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="다운로드/변환 없이 주소와 다운로드 리소스 매칭만 확인")
     parser.add_argument("--input-zip", type=Path, help="VWorld에서 이미 내려받은 연속지적도 ZIP을 직접 사용")
     parser.add_argument("--zone-zip", action="append", default=[], help="Optional land-use zone ZIP in key=path format")
+    parser.add_argument("--road-zip", type=Path, help="도로명주소 실폭도로(시도별) SHP ZIP 경로(Z_KAIS_TL_SPRD_RW)")
     parser.add_argument("--parcel-list", type=Path, action="append", default=[], help="DXF에 별도 레이어로 추가할 지번 목록 엑셀/CSV/TXT 파일")
     args = parser.parse_args()
 
@@ -1527,6 +1594,13 @@ def main():
         cache_path = out_dir / "vworld_5174_resources.json"
         resources = load_resource_index(cache_path)
         resource = match_resource(resources, sido, sigungu)
+        # 도로명주소 실폭도로(시도별) 리소스도 함께 해결(실패해도 전체 진행에 영향 없음)
+        road_resource = None
+        try:
+            road_cache = out_dir / "vworld_30057_road_resources.json"
+            road_resource = match_road_resource(load_road_resource_index(road_cache), sido)
+        except Exception as road_exc:
+            print(f"실폭도로 리소스 조회 경고: {road_exc}")
         if args.dry_run:
             print(
                 json.dumps(
@@ -1539,6 +1613,8 @@ def main():
                         "y": y,
                         "resource": resource["label"],
                         "download_href": resource["href"],
+                        "road_resource": road_resource["label"] if road_resource else None,
+                        "road_download_href": road_resource["href"] if road_resource else None,
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -1611,8 +1687,24 @@ def main():
                         "selected_shp": str(zone_selected_shp),
                     }
                 )
+        # 실폭도로(도로명주소 Z_KAIS_TL_SPRD_RW): 반경 클립 → 면 경계선 → '실폭도로' 레이어
+        road_line_for_dxf = None
+        road_count = 0
+        if args.road_zip and Path(args.road_zip).exists():
+            print("실폭도로(도로명주소) SHP를 반경 안에서 선택하는 중입니다.")
+            road_source_shp = extract_zip_find(Path(args.road_zip), extracted / Path(args.road_zip).stem, "SPRD_RW")
+            road_selected_shp = result_dir / f"{stem}_{r_label}_silpok.shp"
+            road_count = export_zone_within_radius(road_source_shp, x, y, args.radius, road_selected_shp)
+            print(f"실폭도로 선택 개수: {road_count}")
+            if road_count > 0:
+                road_line_shp = result_dir / f"{stem}_{r_label}_silpok_lines.shp"
+                export_polygon_boundaries_to_lines(road_selected_shp, road_line_shp)
+                road_line_for_dxf = road_line_shp
+        elif args.road_zip:
+            print(f"실폭도로 ZIP 경로를 찾지 못해 건너뜁니다: {args.road_zip}")
+
         print("연속지적 라인과 용도지역 해치 DXF를 만드는 중입니다.")
-        dxf_path = apply_style_and_export_dxf(line_shp, selected_shp, args.style, dxf_path, zone_layers, args.zone_style, parcel_list_line_for_dxf)
+        dxf_path = apply_style_and_export_dxf(line_shp, selected_shp, args.style, dxf_path, zone_layers, args.zone_style, parcel_list_line_for_dxf, road_line_for_dxf)
         label_count = label_feature_count(selected_shp, args.style)
         print(f"지번 라벨 수: {label_count}")
         print("QGIS 프로젝트를 저장하는 중입니다.")
@@ -1631,6 +1723,7 @@ def main():
             "line_count": line_count,
             "label_count": label_count,
             "parcel_list_count": parcel_list_count,
+            "road_count": road_count,
             "zone_layers": zone_layers,
             "source_shp": str(source_shp),
             "selected_shp": str(selected_shp),
