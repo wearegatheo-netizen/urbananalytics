@@ -596,6 +596,20 @@ def export_zone_within_radius(source_shp, x, y, radius_m, selected_shp):
         raise RuntimeError(f"Could not load zone layer: {source_shp}")
     target_crs = QgsCoordinateReferenceSystem("EPSG:5174")
     source_crs = source.crs()
+    # .prj WKT로 만든 CRS는 EPSG 데이텀 정체성이 없어 데이텀 변환이 null/부정확으로 폴백될 수 있다
+    # (예: 실폭도로 5179(세계측지계) → 지적 5174(지역측지계) 시 ~900m 어긋남).
+    # authid로 정규 EPSG CRS를 재구성하면 PROJ가 정확한 데이텀 변환을 적용한다.
+    authid = source_crs.authid()
+    if authid:
+        canon = QgsCoordinateReferenceSystem(authid)
+        if canon.isValid():
+            source_crs = canon
+    else:
+        wkt = source_crs.toWkt() or ""
+        if "Unified" in wkt:           # Korea 2000 / Unified CS
+            source_crs = QgsCoordinateReferenceSystem("EPSG:5179")
+        elif "Korean_1985" in wkt or "Korean 1985" in wkt:
+            source_crs = QgsCoordinateReferenceSystem("EPSG:5174")
     center = QgsPointXY(x, y)
     write_transform = None
     if source_crs.isValid() and source_crs.authid().upper() != "EPSG:5174":
