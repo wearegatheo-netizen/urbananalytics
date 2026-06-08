@@ -1076,7 +1076,7 @@
             <div class="height-table-wrap">
               <table class="height-table">
                 <thead>
-                  <tr><th>연번</th><th>소재지</th><th>지번</th><th>지목</th><th>공부면적</th><th>용도지역</th><th>공시지가</th><th>공시지가액</th></tr>
+                  <tr><th>연번</th><th>소재지</th><th>지번</th><th>지목</th><th>소유구분</th><th>공부면적</th><th>용도지역</th><th>공시지가</th><th>공시지가액</th></tr>
                 </thead>
                 <tbody id="surveyBody"></tbody>
               </table>
@@ -2059,6 +2059,7 @@
           <td style="text-align:left">${escapeHtml(r.addr || "")}</td>
           <td>${escapeHtml(r.jibun || "")}</td>
           <td>${escapeHtml(r.jimok || "")}</td>
+          <td title="${escapeHtml(r.ownerRaw || "")}">${escapeHtml(r.owner || "-")}</td>
           <td title="${r.regArea != null ? "공부면적" : "도형 " + numberText(r.geomArea, 1)}">${r.regArea != null ? numberText(r.regArea, 1) : (r.geomArea != null ? numberText(r.geomArea, 1) + "*" : "—")}</td>
           <td style="text-align:left">${escapeHtml(r.zone || "-")}</td>
           <td>${r.jiga != null ? Number(r.jiga).toLocaleString() : "—"}</td>

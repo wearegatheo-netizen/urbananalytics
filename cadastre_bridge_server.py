@@ -1049,6 +1049,44 @@ def fetch_registered_area(pnu, api_key, domain=""):
     return ar if (ar and ar > 0) else None
 
 
+def fetch_land_ladfrl(pnu, api_key, domain=""):
+    """VWorld NED 토지임야(ladfrlList): 소유구분(posesnSeCodeNm)·공유인수(cnrsPsnCo) 등 반환.
+    소유자 '이름'은 제공하지 않고 구분만 제공. 실패 시 {}."""
+    pnu = str(pnu or "").strip()
+    if not api_key or not pnu:
+        return {}
+    params = {"key": api_key, "pnu": pnu, "format": "json", "numOfRows": "5", "pageNo": "1"}
+    dom = domain or current_vworld_domain()
+    if dom:
+        params["domain"] = dom
+    try:
+        data = http_get_json("https://api.vworld.kr/ned/data/ladfrlList", params, retries=2)
+    except Exception:
+        return {}
+    vo = (data.get("ladfrlVOList") or {}).get("ladfrlVOList")
+    if isinstance(vo, dict):
+        vo = [vo]
+    return vo[0] if vo else {}
+
+
+def simplify_owner_type(name):
+    """소유구분명을 개인/법인/국공유지/외국인 등으로 단순화."""
+    nm = str(name or "").strip()
+    if not nm:
+        return ""
+    if "법인" in nm:
+        return "법인"
+    if "외국" in nm:
+        return "외국인"
+    if "개인" in nm:
+        return "개인"
+    if any(t in nm for t in ("국유", "공유", "국가", "도유", "시유", "군유", "구유", "공공", "지자체")):
+        return "국공유지"
+    if "종중" in nm:
+        return "종중"
+    return nm
+
+
 def analyze_selected_parcels(payload):
     api_key = str(payload.get("apiKey") or "").strip()
     if not api_key:
@@ -2084,6 +2122,12 @@ def build_parcel_survey(payload):
         ring = primary_ring(feature)
         geom_area = abs(projected_polygon_area(project_ring(ring))) if ring else None
         rec = fetch_land_characteristics(pnu, api_key) if (use_char and pnu) else {}
+        ladfrl = fetch_land_ladfrl(pnu, api_key) if (use_char and pnu) else {}
+        owner_raw = str(ladfrl.get("posesnSeCodeNm") or "").strip()
+        owner = simplify_owner_type(owner_raw)
+        cnrs = parse_float(ladfrl.get("cnrsPsnCo"))
+        if owner and cnrs and cnrs > 1:
+            owner = f"{owner}(공유 {int(cnrs)}인)"
         reg_area = parse_float(rec.get("lndpclAr"))
         jiga = parse_float(rec.get("pblntfPclnd"))
         z1 = str(rec.get("prposArea1Nm") or "").strip()
@@ -2102,6 +2146,7 @@ def build_parcel_survey(payload):
             "no": idx,
             "addr": addr, "sido": sido, "sigungu": sgg, "emd": emd,
             "jibun": jibun_no, "jimok": jimok or "-", "pnu": pnu,
+            "owner": owner or "-", "ownerRaw": owner_raw,
             "regArea": round(reg_area, 2) if reg_area else None,
             "geomArea": round(geom_area, 2) if geom_area else None,
             "zone": zone or "-",
@@ -2152,7 +2197,7 @@ def build_parcel_survey_xlsx(payload):
     ws["A3"].font = legend_font
 
     header_row = 5
-    headers = ["연번", "소재지", "지번", "지목", "공부면적(㎡)", "도형면적(㎡)",
+    headers = ["연번", "소재지", "지번", "지목", "소유구분", "공부면적(㎡)", "도형면적(㎡)",
                "용도지역", "개별공시지가(원/㎡)", "공시지가액(원)", "이용상황", "기준연도", "PNU"]
     for c, text in enumerate(headers, 1):
         cell = ws.cell(row=header_row, column=c, value=text)
@@ -2160,10 +2205,10 @@ def build_parcel_survey_xlsx(payload):
         cell.fill = head_fill
         cell.alignment = center
         cell.border = border
-    num_cols = {5, 6, 8, 9}
+    num_cols = {6, 7, 9, 10}   # 공부면적, 도형면적, 개별공시지가, 공시지가액
     for i, row in enumerate(rows):
         rr = header_row + 1 + i
-        vals = [row.get("no"), row.get("addr"), row.get("jibun"), row.get("jimok"),
+        vals = [row.get("no"), row.get("addr"), row.get("jibun"), row.get("jimok"), row.get("owner"),
                 parse_float(row.get("regArea")), parse_float(row.get("geomArea")),
                 row.get("zone"), row.get("jiga"), row.get("jigaTotal"),
                 row.get("useSittn"), row.get("year"), row.get("pnu")]
@@ -2171,30 +2216,30 @@ def build_parcel_survey_xlsx(payload):
             cell = ws.cell(row=rr, column=c, value=v)
             cell.border = border
             if c in num_cols:
-                cell.number_format = num_fmt if c in (5, 6) else int_fmt
+                cell.number_format = num_fmt if c in (6, 7) else int_fmt
                 cell.alignment = right
-            elif c == 1:
+            elif c in (1, 5):
                 cell.alignment = center
             else:
                 cell.alignment = left
     tr = header_row + 1 + len(rows)
     ws.cell(row=tr, column=1, value="합계").font = Font(bold=True)
-    ws.cell(row=tr, column=5, value=parse_float(totals.get("regArea")))
-    ws.cell(row=tr, column=6, value=parse_float(totals.get("geomArea")))
-    ws.cell(row=tr, column=9, value=totals.get("jigaTotal"))
+    ws.cell(row=tr, column=6, value=parse_float(totals.get("regArea")))
+    ws.cell(row=tr, column=7, value=parse_float(totals.get("geomArea")))
+    ws.cell(row=tr, column=10, value=totals.get("jigaTotal"))
     for c in range(1, len(headers) + 1):
         cell = ws.cell(row=tr, column=c)
         cell.border = border
         cell.fill = total_fill
-        if c in (5, 6):
+        if c in (6, 7):
             cell.number_format = num_fmt
             cell.font = Font(bold=True)
             cell.alignment = right
-        if c == 9:
+        if c == 10:
             cell.number_format = int_fmt
             cell.font = Font(bold=True)
             cell.alignment = right
-    widths = [6, 30, 10, 7, 12, 12, 20, 16, 16, 12, 9, 22]
+    widths = [6, 30, 10, 7, 11, 12, 12, 20, 16, 16, 12, 9, 22]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
