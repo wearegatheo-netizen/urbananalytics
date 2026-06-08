@@ -433,6 +433,29 @@ def primary_ring(feature):
     return max(rings, key=lambda ring: abs(projected_polygon_area(project_ring(ring))))
 
 
+def feature_geom_area(feature):
+    """필지 도형의 실제 면적(㎡, EPSG:5186): 모든 폴리곤의 (외곽링 − 구멍링) 합.
+    멀티폴리곤(여러 조각)·구멍(도넛)을 정확히 반영한다(primary_ring 단일링 계산의 오류 보정)."""
+    geom = feature.get("geometry") or {}
+    gtype = geom.get("type")
+    coords = geom.get("coordinates") or []
+    if gtype == "Polygon":
+        polygons = [coords]
+    elif gtype == "MultiPolygon":
+        polygons = coords
+    else:
+        return 0.0
+    total = 0.0
+    for poly in polygons:
+        if not poly:
+            continue
+        outer = poly[0]
+        outer_area = abs(projected_polygon_area(project_ring(outer))) if len(outer) >= 4 else 0.0
+        holes = sum(abs(projected_polygon_area(project_ring(r))) for r in poly[1:] if len(r) >= 4)
+        total += max(outer_area - holes, 0.0)
+    return total
+
+
 def lonlat_centroid(ring):
     return sum(float(pt[1]) for pt in ring) / len(ring), sum(float(pt[0]) for pt in ring) / len(ring)
 
@@ -1144,7 +1167,8 @@ def analyze_selected_parcels(payload):
             ring = primary_ring(feature)
             member_rings.append(ring)
             member_parcels.append(m_parcel)
-            member_area_sum += abs(projected_polygon_area(project_ring(ring)))
+            # 도형면적: 멀티폴리곤·구멍을 정확히 반영(외곽−구멍 합)
+            member_area_sum += feature_geom_area(feature)
             # 공부면적(토지특성, lndpclAr) — PNU로 자동조회(같은 VWorld 키)
             reg = None
             if use_reg_area:
@@ -1158,12 +1182,10 @@ def analyze_selected_parcels(payload):
         geom_area = member_area_sum
         if len(member_rings) <= 1:
             ring = member_rings[0]
-            geom_area = abs(projected_polygon_area(project_ring(ring)))
         else:
             # 여러 필지를 하나의 획지로 합침(외곽선은 union, 면적은 비중첩 합)
             merged_ring = merge_rings_to_lonlat(member_rings)
             ring = merged_ring if merged_ring else member_rings[0]
-            geom_area = member_area_sum
         reg_area = member_reg_sum if (use_reg_area and all_have_reg and member_reg_sum > 0) else None
         # 대지면적(산정 기준): 공부면적 있으면 공부, 없으면 도형
         area = reg_area if reg_area else geom_area
@@ -2119,12 +2141,11 @@ def build_parcel_survey(payload):
         feature = get_parcel_feature(m_lat, m_lon, api_key)["features"][0]
         props = feature.get("properties") or {}
         pnu = str(props.get("pnu") or "").strip()
-        ring = primary_ring(feature)
-        geom_area = abs(projected_polygon_area(project_ring(ring))) if ring else None
+        geom_area = feature_geom_area(feature) or None
         rec = fetch_land_characteristics(pnu, api_key) if (use_char and pnu) else {}
         ladfrl = fetch_land_ladfrl(pnu, api_key) if (use_char and pnu) else {}
-        owner_raw = str(ladfrl.get("posesnSeCodeNm") or "").strip()
-        owner = simplify_owner_type(owner_raw)
+        # 소유구분: 세부내용 그대로(개인/법인/국유지/도유지/군유지/외국인/종중 등)
+        owner = owner_raw = str(ladfrl.get("posesnSeCodeNm") or "").strip()
         cnrs = parse_float(ladfrl.get("cnrsPsnCo"))
         if owner and cnrs and cnrs > 1:
             owner = f"{owner}(공유 {int(cnrs)}인)"
@@ -2142,8 +2163,10 @@ def build_parcel_survey(payload):
         emd = str(props.get("emd_nm") or "").strip()
         addr = str(props.get("addr") or "").strip() or " ".join(x for x in [sido, sgg, emd, jibun_no] if x)
         area_for_value = reg_area if reg_area else geom_area
+        area_diff_pct = round((geom_area - reg_area) / reg_area * 100, 1) if (reg_area and geom_area) else None
         rows.append({
             "no": idx,
+            "areaDiffPct": area_diff_pct,
             "addr": addr, "sido": sido, "sigungu": sgg, "emd": emd,
             "jibun": jibun_no, "jimok": jimok or "-", "pnu": pnu,
             "owner": owner or "-", "ownerRaw": owner_raw,

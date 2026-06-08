@@ -2060,7 +2060,7 @@
           <td>${escapeHtml(r.jibun || "")}</td>
           <td>${escapeHtml(r.jimok || "")}</td>
           <td title="${escapeHtml(r.ownerRaw || "")}">${escapeHtml(r.owner || "-")}</td>
-          <td title="${r.regArea != null ? "공부면적" : "도형 " + numberText(r.geomArea, 1)}">${r.regArea != null ? numberText(r.regArea, 1) : (r.geomArea != null ? numberText(r.geomArea, 1) + "*" : "—")}</td>
+          <td title="${r.regArea != null ? ("도형 " + numberText(r.geomArea, 1) + (r.areaDiffPct != null ? " · 공부와 차이 " + (r.areaDiffPct > 0 ? "+" : "") + r.areaDiffPct + "%" : "")) : "공부면적 조회 안됨 → 도형면적(*)"}"${(r.areaDiffPct != null && Math.abs(r.areaDiffPct) >= 10) ? ' style="color:#c0392b;font-weight:700"' : ""}>${r.regArea != null ? numberText(r.regArea, 1) : (r.geomArea != null ? numberText(r.geomArea, 1) + "*" : "—")}${(r.areaDiffPct != null && Math.abs(r.areaDiffPct) >= 10) ? " ⚠" : ""}</td>
           <td style="text-align:left">${escapeHtml(r.zone || "-")}</td>
           <td>${r.jiga != null ? Number(r.jiga).toLocaleString() : "—"}</td>
           <td>${r.jigaTotal != null ? Number(r.jigaTotal).toLocaleString() : "—"}</td>
