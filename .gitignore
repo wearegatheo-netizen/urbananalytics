@@ -31,3 +31,5 @@ source.pdf
 # OS
 Thumbs.db
 .DS_Store
+
+node_modules/
