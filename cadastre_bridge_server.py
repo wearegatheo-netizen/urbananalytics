@@ -2125,61 +2125,117 @@ def _fmt_num(value, digits=2):
         return "-"
 
 
+def survey_items_from_file(upload, api_key):
+    """지번 목록 엑셀/CSV를 파싱해 조서 대상 필지(주소→좌표) 목록을 만든다."""
+    raw_rows = parse_block_height_rows(upload)
+    items = []
+    for r in raw_rows:
+        addr = row_value(r, ["주소", "소재지", "소재지지번", "소재", "위치", "address", "addr"])
+        if not addr:
+            parts = [
+                row_value(r, ["시도", "광역시도", "sido"]),
+                row_value(r, ["시군구", "군구", "sigungu"]),
+                row_value(r, ["읍면동", "법정동", "행정동", "동", "리", "emd"]),
+                row_value(r, ["지번", "번지", "parcel", "lot", "pnu"]),
+            ]
+            addr = " ".join(str(p).strip() for p in parts if p and str(p).strip())
+        addr = str(addr or "").strip()
+        if not addr:
+            continue
+        item = {"parcel": addr}
+        try:
+            lat, lon, _ = geocode(addr, api_key)
+            item["lat"], item["lon"] = lat, lon
+        except Exception:
+            item["error"] = "주소를 좌표로 변환하지 못했습니다"
+        items.append(item)
+    if not items:
+        raise ValueError("엑셀에서 주소/지번 열을 찾지 못했습니다. '주소'(또는 '소재지'+'지번') 열이 필요합니다.")
+    return items
+
+
 def build_parcel_survey(payload):
-    """지도에서 선택한 필지들의 토지 조서(지번·지목·면적·용도지역·공시지가)를 생성."""
+    """지도 선택 또는 엑셀 업로드 필지들의 토지 조서(지번·지목·면적·소유구분·용도지역·공시지가)를 생성."""
     api_key = str(payload.get("apiKey") or "").strip()
     if not api_key:
         raise ValueError("필지 조서에는 VWorld API 키가 필요합니다.")
     items = payload.get("parcelListItems") or []
+    upload = payload.get("surveyListFile") or {}
+    if not items and upload.get("name"):
+        items = survey_items_from_file(upload, api_key)
     if not items:
-        raise ValueError("지도에서 필지를 먼저 선택해 주세요.")
+        raise ValueError("지도에서 필지를 선택하거나, 지번 목록 엑셀을 첨부해 주세요.")
     use_char = payload.get("useLandChar", True) is not False
     rows = []
+    fail_count = 0
     for idx, item in enumerate(items, 1):
-        m_lat = float(item.get("lat"))
-        m_lon = float(item.get("lon"))
-        feature = get_parcel_feature(m_lat, m_lon, api_key)["features"][0]
-        props = feature.get("properties") or {}
-        pnu = str(props.get("pnu") or "").strip()
-        geom_area = feature_geom_area(feature) or None
-        rec = fetch_land_characteristics(pnu, api_key) if (use_char and pnu) else {}
-        ladfrl = fetch_land_ladfrl(pnu, api_key) if (use_char and pnu) else {}
-        # 소유구분: 세부내용 그대로(개인/법인/국유지/도유지/군유지/외국인/종중 등)
-        owner = owner_raw = str(ladfrl.get("posesnSeCodeNm") or "").strip()
-        cnrs = parse_float(ladfrl.get("cnrsPsnCo"))
-        if owner and cnrs and cnrs > 1:
-            owner = f"{owner}(공유 {int(cnrs)}인)"
-        reg_area = parse_float(rec.get("lndpclAr"))
-        jiga = parse_float(rec.get("pblntfPclnd"))
-        z1 = str(rec.get("prposArea1Nm") or "").strip()
-        z2 = str(rec.get("prposArea2Nm") or "").strip()
-        zone = z1 + (f" / {z2}" if z2 and z2 != "지정되지않음" else "")
-        jibun_raw = str(props.get("jibun") or "").strip()      # 예: "161-7 대"
-        parts = jibun_raw.split()
-        jibun_no = parts[0] if parts else f"{props.get('bonbun', '')}-{props.get('bubun', '')}".strip("-")
-        jimok = str(rec.get("lndcgrCodeNm") or (parts[1] if len(parts) > 1 else "")).strip()
-        sido = str(props.get("ctp_nm") or "").strip()
-        sgg = str(props.get("sig_nm") or "").strip()
-        emd = str(props.get("emd_nm") or "").strip()
-        addr = str(props.get("addr") or "").strip() or " ".join(x for x in [sido, sgg, emd, jibun_no] if x)
-        area_for_value = reg_area if reg_area else geom_area
-        area_diff_pct = round((geom_area - reg_area) / reg_area * 100, 1) if (reg_area and geom_area) else None
-        rows.append({
-            "no": idx,
-            "areaDiffPct": area_diff_pct,
-            "addr": addr, "sido": sido, "sigungu": sgg, "emd": emd,
-            "jibun": jibun_no, "jimok": jimok or "-", "pnu": pnu,
-            "owner": owner or "-", "ownerRaw": owner_raw,
-            "regArea": round(reg_area, 2) if reg_area else None,
-            "geomArea": round(geom_area, 2) if geom_area else None,
-            "zone": zone or "-",
-            "jiga": int(round(jiga)) if jiga else None,
-            "jigaTotal": int(round(jiga * area_for_value)) if (jiga and area_for_value) else None,
-            "useSittn": str(rec.get("ladUseSittnNm") or "").strip(),
-            "year": str(rec.get("stdrYear") or "").strip(),
-        })
+        label = str(item.get("parcel") or "").strip()
+        try:
+            if item.get("error"):
+                raise ValueError(item["error"])
+            if item.get("lat") is None or item.get("lon") is None:
+                raise ValueError("좌표가 없습니다")
+            m_lat = float(item.get("lat"))
+            m_lon = float(item.get("lon"))
+            feats = (get_parcel_feature(m_lat, m_lon, api_key) or {}).get("features") or []
+            if not feats:
+                raise ValueError("해당 위치에서 필지를 찾지 못했습니다")
+            feature = feats[0]
+            props = feature.get("properties") or {}
+            pnu = str(props.get("pnu") or "").strip()
+            geom_area = feature_geom_area(feature) or None
+            rec = fetch_land_characteristics(pnu, api_key) if (use_char and pnu) else {}
+            ladfrl = fetch_land_ladfrl(pnu, api_key) if (use_char and pnu) else {}
+            # 소유구분: 세부내용 그대로(개인/법인/국유지/도유지/군유지/외국인/종중 등)
+            owner = owner_raw = str(ladfrl.get("posesnSeCodeNm") or "").strip()
+            cnrs = parse_float(ladfrl.get("cnrsPsnCo"))
+            if owner and cnrs and cnrs > 1:
+                owner = f"{owner}(공유 {int(cnrs)}인)"
+            reg_area = parse_float(rec.get("lndpclAr"))
+            jiga = parse_float(rec.get("pblntfPclnd"))
+            z1 = str(rec.get("prposArea1Nm") or "").strip()
+            z2 = str(rec.get("prposArea2Nm") or "").strip()
+            zone = z1 + (f" / {z2}" if z2 and z2 != "지정되지않음" else "")
+            jibun_raw = str(props.get("jibun") or "").strip()      # 예: "161-7 대"
+            parts = jibun_raw.split()
+            jibun_no = parts[0] if parts else f"{props.get('bonbun', '')}-{props.get('bubun', '')}".strip("-")
+            jimok = str(rec.get("lndcgrCodeNm") or (parts[1] if len(parts) > 1 else "")).strip()
+            sido = str(props.get("ctp_nm") or "").strip()
+            sgg = str(props.get("sig_nm") or "").strip()
+            emd = str(props.get("emd_nm") or "").strip()
+            addr = str(props.get("addr") or "").strip() or " ".join(x for x in [sido, sgg, emd, jibun_no] if x)
+            area_for_value = reg_area if reg_area else geom_area
+            area_diff_pct = round((geom_area - reg_area) / reg_area * 100, 1) if (reg_area and geom_area) else None
+            rows.append({
+                "no": idx,
+                "areaDiffPct": area_diff_pct,
+                "addr": addr, "sido": sido, "sigungu": sgg, "emd": emd,
+                "jibun": jibun_no, "jimok": jimok or "-", "pnu": pnu,
+                "owner": owner or "-", "ownerRaw": owner_raw,
+                "regArea": round(reg_area, 2) if reg_area else None,
+                "geomArea": round(geom_area, 2) if geom_area else None,
+                "zone": zone or "-",
+                "jiga": int(round(jiga)) if jiga else None,
+                "jigaTotal": int(round(jiga * area_for_value)) if (jiga and area_for_value) else None,
+                "useSittn": str(rec.get("ladUseSittnNm") or "").strip(),
+                "year": str(rec.get("stdrYear") or "").strip(),
+                "error": "",
+            })
+        except Exception as exc:
+            fail_count += 1
+            rows.append({
+                "no": idx, "areaDiffPct": None,
+                "addr": label or "(주소 미상)", "sido": "", "sigungu": "", "emd": "",
+                "jibun": "", "jimok": "-", "pnu": "",
+                "owner": "-", "ownerRaw": "",
+                "regArea": None, "geomArea": None, "zone": "-",
+                "jiga": None, "jigaTotal": None, "useSittn": "", "year": "",
+                "error": str(exc)[:80] or "조회 실패",
+            })
     totals = {
         "count": len(rows),
+        "failCount": fail_count,
+        "source": "file" if (not payload.get("parcelListItems") and upload.get("name")) else "map",
         "regArea": round(sum(r["regArea"] or 0 for r in rows), 2),
         "geomArea": round(sum(r["geomArea"] or 0 for r in rows), 2),
         "jigaTotal": sum(r["jigaTotal"] or 0 for r in rows),
@@ -2221,35 +2277,46 @@ def build_parcel_survey_xlsx(payload):
 
     header_row = 5
     headers = ["연번", "소재지", "지번", "지목", "소유구분", "공부면적(㎡)", "도형면적(㎡)",
-               "용도지역", "개별공시지가(원/㎡)", "공시지가액(원)", "이용상황", "기준연도", "PNU"]
+               "도형-공부 차(%)", "용도지역", "개별공시지가(원/㎡)", "공시지가액(원)",
+               "이용상황", "기준연도", "PNU", "비고"]
     for c, text in enumerate(headers, 1):
         cell = ws.cell(row=header_row, column=c, value=text)
         cell.font = head_font
         cell.fill = head_fill
         cell.alignment = center
         cell.border = border
-    num_cols = {6, 7, 9, 10}   # 공부면적, 도형면적, 개별공시지가, 공시지가액
+    num_cols = {6, 7, 10, 11}   # 공부면적, 도형면적, 개별공시지가, 공시지가액
+    diff_font = Font(color="C0392B", bold=True)
     for i, row in enumerate(rows):
         rr = header_row + 1 + i
+        diff = parse_float(row.get("areaDiffPct"))
+        big_diff = diff is not None and abs(diff) >= 10
         vals = [row.get("no"), row.get("addr"), row.get("jibun"), row.get("jimok"), row.get("owner"),
-                parse_float(row.get("regArea")), parse_float(row.get("geomArea")),
+                parse_float(row.get("regArea")), parse_float(row.get("geomArea")), diff,
                 row.get("zone"), row.get("jiga"), row.get("jigaTotal"),
-                row.get("useSittn"), row.get("year"), row.get("pnu")]
+                row.get("useSittn"), row.get("year"), row.get("pnu"), row.get("error") or ""]
         for c, v in enumerate(vals, 1):
             cell = ws.cell(row=rr, column=c, value=v)
             cell.border = border
             if c in num_cols:
                 cell.number_format = num_fmt if c in (6, 7) else int_fmt
                 cell.alignment = right
+            elif c == 8:                       # 도형-공부 차(%)
+                cell.number_format = '+0.0;-0.0'
+                cell.alignment = right
+                if big_diff:
+                    cell.font = diff_font
             elif c in (1, 5):
                 cell.alignment = center
             else:
                 cell.alignment = left
+            if big_diff and c in (6, 7):
+                cell.font = diff_font
     tr = header_row + 1 + len(rows)
     ws.cell(row=tr, column=1, value="합계").font = Font(bold=True)
     ws.cell(row=tr, column=6, value=parse_float(totals.get("regArea")))
     ws.cell(row=tr, column=7, value=parse_float(totals.get("geomArea")))
-    ws.cell(row=tr, column=10, value=totals.get("jigaTotal"))
+    ws.cell(row=tr, column=11, value=totals.get("jigaTotal"))
     for c in range(1, len(headers) + 1):
         cell = ws.cell(row=tr, column=c)
         cell.border = border
@@ -2258,11 +2325,11 @@ def build_parcel_survey_xlsx(payload):
             cell.number_format = num_fmt
             cell.font = Font(bold=True)
             cell.alignment = right
-        if c == 10:
+        if c == 11:
             cell.number_format = int_fmt
             cell.font = Font(bold=True)
             cell.alignment = right
-    widths = [6, 30, 10, 7, 11, 12, 12, 20, 16, 16, 12, 9, 22]
+    widths = [6, 30, 10, 7, 11, 12, 12, 13, 20, 16, 16, 12, 9, 22, 18]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
