@@ -159,6 +159,169 @@ def reverse_geocode_parcel(lat, lon, api_key):
     raise ValueError("선택한 위치의 지번을 찾지 못했습니다.")
 
 
+def http_get_bytes(url, params, retries=3, timeout=30):
+    full = f"{url}?{urllib.parse.urlencode(params)}"
+    last = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(full, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return res.read(), res.headers.get("content-type", "")
+        except Exception as exc:
+            last = exc
+            if attempt < retries - 1:
+                time.sleep(0.4 * (attempt + 1))
+    raise last
+
+
+VWORLD_WMS_URL = "https://api.vworld.kr/req/wms"
+
+
+def _zoning_name_at(common, px, py, fallback_lonlat=None):
+    """lt_c_uq111 WMS GetFeatureInfo로 픽셀 위치의 용도지역 명칭을 얻는다."""
+    params = dict(common)
+    params.update({
+        "REQUEST": "GetFeatureInfo", "LAYERS": "lt_c_uq111", "QUERY_LAYERS": "lt_c_uq111",
+        "STYLES": "lt_c_uq111", "INFO_FORMAT": "application/json",
+        "I": str(int(px)), "J": str(int(py)), "FEATURE_COUNT": "1",
+        "FORMAT": "image/png", "TRANSPARENT": "true",
+    })
+    name = ""
+    try:
+        data = http_get_json(VWORLD_WMS_URL, params)
+        feats = data.get("features") or []
+        if feats:
+            props = feats[0].get("properties") or {}
+            for k in ("dgm_nm", "prpos_area_dstrc_code_nm", "uname", "ucode_nm", "label", "dgm_nm_1"):
+                v = str(props.get(k) or "").strip()
+                if v:
+                    name = v
+                    break
+            if not name:
+                for v in props.values():
+                    s = str(v or "").strip()
+                    if "지역" in s or "지구" in s or "구역" in s:
+                        name = s
+                        break
+    except Exception:
+        name = ""
+    return name
+
+
+def sample_zoning_legend(api_key, bbox, width=320, height=320, max_items=16):
+    """현재 보기 영역의 용도지역 WMS를 렌더해 실제 색↔명칭 범례를 만든다(화면과 일치)."""
+    if not api_key:
+        return []
+    from PIL import Image
+    import numpy as np
+    minx, miny, maxx, maxy = (float(v) for v in bbox)
+    if not (maxx > minx and maxy > miny):
+        return []
+    dom = current_vworld_domain()
+    common = {
+        "SERVICE": "WMS", "VERSION": "1.3.0", "CRS": "EPSG:4326",
+        "BBOX": f"{miny},{minx},{maxy},{maxx}",   # 1.3.0 + EPSG:4326 → lat,lon 순서
+        "WIDTH": str(width), "HEIGHT": str(height),
+        "key": api_key, "DOMAIN": dom,
+    }
+    map_params = dict(common)
+    map_params.update({
+        "REQUEST": "GetMap", "LAYERS": "lt_c_uq111", "STYLES": "lt_c_uq111",
+        "FORMAT": "image/png", "TRANSPARENT": "false", "BGCOLOR": "0xFFFFFF",
+    })
+    raw, ct = http_get_bytes(VWORLD_WMS_URL, map_params)
+    if "image" not in (ct or ""):
+        return []
+    arr = np.asarray(Image.open(io.BytesIO(raw)).convert("RGB"))
+    h, w, _ = arr.shape
+    flat = arr.reshape(-1, 3).astype(int)
+    r, g, b = flat[:, 0], flat[:, 1], flat[:, 2]
+    mx = np.maximum(np.maximum(r, g), b)
+    mn = np.minimum(np.minimum(r, g), b)
+    is_white = (r >= 243) & (g >= 243) & (b >= 243)
+    is_black = mx <= 55
+    is_gray = ((mx - mn) <= 12) & (mx < 235)        # 경계선·라벨(회색) 제외
+    keep = ~(is_white | is_black | is_gray)
+    keep_pos = np.nonzero(keep)[0]
+    if keep_pos.size == 0:
+        return []
+    cols = flat[keep_pos]
+    # 정확 실제색(양자화 없음) 빈도 — 용도지역 채움은 단색 평면이므로 최빈 정확색이 곧 채움색
+    ucol, ucnt = np.unique(cols, axis=0, return_counts=True)
+    order = np.argsort(-ucnt)
+    ar = arr[:, :, 0]; ag = arr[:, :, 1]; ab = arr[:, :, 2]
+    min_px = max(40, int(h * w * 0.0015))
+    legend, seen = [], set()
+    for oi in order:
+        if len(legend) >= max_items:
+            break
+        if ucnt[oi] < min_px:                         # 단색 채움이 충분히 큰 색만(혼합/경계 잡색 제외)
+            continue
+        cr, cg, cb = (int(v) for v in ucol[oi])
+        # 정확히 이 채움색인 픽셀의 2D 마스크
+        mask = (ar == cr) & (ag == cg) & (ab == cb)
+        # 반복 4-이웃 침식 → '가장 깊은 내부' 픽셀(영역 코어). 같은 색이 여러 곳에
+        # 흩어져 있어도 코어에서 조회하므로 경계 이웃 구역 오인식이 없다.
+        deepest = mask
+        cur = mask
+        while True:
+            e = cur.copy()
+            e[1:, :] &= cur[:-1, :]
+            e[:-1, :] &= cur[1:, :]
+            e[:, 1:] &= cur[:, :-1]
+            e[:, :-1] &= cur[:, 1:]
+            if not e.any():
+                break
+            deepest = e
+            cur = e
+        ys, xs = np.nonzero(deepest)
+        if ys.size == 0:
+            continue
+        cy, cx = ys.mean(), xs.mean()
+        j = int(np.argmin((ys - cy) ** 2 + (xs - cx) ** 2))
+        py, px = int(ys[j]), int(xs[j])
+        name = _zoning_name_at(common, px, py)
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        hexc = "#%02x%02x%02x" % (cr, cg, cb)
+        legend.append({"name": name, "color": hexc})
+    # 면적(빈도) 순 유지
+    return legend
+
+
+def reverse_geocode_both(lat, lon, api_key):
+    """역지오코딩으로 (지번주소, 도로명주소) 반환. 실패 항목은 빈 문자열."""
+    if not api_key:
+        return "", ""
+    params = {
+        "service": "address", "request": "getAddress", "version": "2.0",
+        "crs": "epsg:4326", "point": f"{lon},{lat}", "format": "json",
+        "type": "BOTH", "key": api_key,
+    }
+    try:
+        data = http_get_json(VWORLD_GEOCODE_URL, params)
+    except Exception:
+        return "", ""
+    response = data.get("response", {})
+    if response.get("status") != "OK":
+        return "", ""
+    result = response.get("result", [])
+    if isinstance(result, dict):
+        result = [result]
+    parcel = road = ""
+    for item in result:
+        t = str(item.get("type") or "").lower()
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        if t == "parcel" and not parcel:
+            parcel = text
+        elif t == "road" and not road:
+            road = text
+    return parcel, road
+
+
 def point_in_ring(lon, lat, ring):
     inside = False
     count = len(ring)
@@ -2608,7 +2771,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 address = qs.get("address", [""])[0].strip()
                 api_key = qs.get("apiKey", [""])[0].strip()
                 lat, lon, refined = geocode(address, api_key)
-                json_response(self, {"ok": True, "lat": lat, "lon": lon, "refined": refined})
+                jibun_addr, road_addr = reverse_geocode_both(lat, lon, api_key)
+                json_response(self, {"ok": True, "lat": lat, "lon": lon, "refined": refined,
+                                     "jibunAddr": jibun_addr, "roadAddr": road_addr})
+                return
+            if path == "/api/zoning-legend":
+                api_key = qs.get("apiKey", [""])[0].strip()
+                try:
+                    bbox = [float(x) for x in qs.get("bbox", [""])[0].split(",")]
+                except Exception:
+                    bbox = []
+                if len(bbox) != 4:
+                    json_response(self, {"ok": False, "error": "bbox(minLon,minLat,maxLon,maxLat)가 필요합니다."}, status=400)
+                    return
+                items = sample_zoning_legend(api_key, bbox)
+                json_response(self, {"ok": True, "items": items})
                 return
             if path == "/api/reverse-parcel":
                 lat = float(qs.get("lat", ["0"])[0])

@@ -630,8 +630,11 @@
       max-height: 48vh; overflow: auto;
       backdrop-filter: blur(4px);
     }
-    .map-legend .legend-title { margin-bottom: 5px; font-size: 12px; font-weight: 800; color: #1d2a23; }
+    .map-legend .legend-title { margin-bottom: 6px; font-size: 12px; font-weight: 800; color: #1d2a23; }
     .map-legend img { display: block; max-width: 190px; }
+    .legend-row { display: flex; align-items: center; gap: 7px; margin: 3px 0; font-size: 11.5px; color: #25303a; white-space: nowrap; }
+    .legend-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.25); flex: 0 0 auto; }
+    .legend-empty { font-size: 11px; color: #6b7884; }
 
     /* PNG 미리보기 썸네일 */
     .preview { margin-top: 13px; }
@@ -745,7 +748,7 @@
   <div id="map"></div>
   <div id="zoningLegend" class="map-legend" style="display:none">
     <div class="legend-title">용도지역 범례</div>
-    <img id="zoningLegendImg" alt="용도지역 범례">
+    <div id="zoningLegendList"></div>
   </div>
 
   <section class="bridge-panel" id="bridgePanel">
@@ -1187,7 +1190,7 @@
 
     const labelIcon = L.divIcon({
       className: "pin-label-icon",
-      html: "<div class='pin-label'>서울 송파구 중대로 113번지<small>서울특별시 송파구 가락동 79-2</small></div>",
+      html: "<div class='pin-label'>서울특별시 송파구 가락동 79-2<small>서울 송파구 중대로 113</small></div>",
       iconSize: null,
       iconAnchor: [0, 0]
     });
@@ -1332,14 +1335,7 @@
         return; // 키 없음 안내는 updateBaseMap에서 처리
       }
       if (map.getZoom() < 13) status("용도지역은 조금 더 확대했을 때 표시됩니다(지도를 확대해 주세요).");
-      // 범례(GetLegendGraphic) — 로드 실패 시 범례 박스 숨김
-      const legendImg = $("zoningLegendImg");
-      if (legendImg && legendBox) {
-        legendImg.onload = () => { legendBox.style.display = "block"; };
-        legendImg.onerror = () => { legendBox.style.display = "none"; };
-        legendImg.src = "https://api.vworld.kr/req/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetLegendGraphic"
-          + "&FORMAT=image/png&LAYER=lt_c_uq111&STYLE=lt_c_uq111&key=" + encodeURIComponent(apiKey);
-      }
+      refreshZoningLegend();   // 현재 보기 영역의 실제 색↔명칭 동적 범례
       zoningLayer = L.tileLayer.wms("https://api.vworld.kr/req/wms", {
         layers: "lt_c_uq111",
         styles: "lt_c_uq111",
@@ -1357,6 +1353,43 @@
         minZoom: 13
       }).addTo(map);
     }
+
+    // 동적 범례: 현재 보기 영역의 용도지역 WMS를 서버가 렌더→실제 색↔명칭 추출(화면과 일치)
+    let zoningLegendTimer = null;
+    let zoningLegendSeq = 0;
+    function scheduleZoningLegend() {
+      if (zoningLegendTimer) clearTimeout(zoningLegendTimer);
+      zoningLegendTimer = setTimeout(refreshZoningLegend, 450);
+    }
+    async function refreshZoningLegend() {
+      const legendBox = $("zoningLegend");
+      const list = $("zoningLegendList");
+      if (!legendBox || !list) return;
+      const mapType = document.querySelector(".mapType:checked").value;
+      const apiKey = $("apiKey").value.trim();
+      if (mapType !== "zoning" || !apiKey || map.getZoom() < 13) { legendBox.style.display = "none"; return; }
+      const b = map.getBounds();
+      const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((v) => v.toFixed(6)).join(",");
+      const seq = ++zoningLegendSeq;
+      legendBox.style.display = "block";
+      list.innerHTML = `<div class="legend-empty">색상 분석 중…</div>`;
+      try {
+        const res = await fetch(`${bridgeBase}/api/zoning-legend?` + new URLSearchParams({ apiKey, bbox }));
+        const json = await res.json();
+        if (seq !== zoningLegendSeq) return; // 더 최신 요청이 있으면 무시
+        const items = (json && json.items) || [];
+        if (!items.length) { list.innerHTML = `<div class="legend-empty">이 영역의 용도지역 색상을 찾지 못했습니다.</div>`; return; }
+        list.innerHTML = items.map((it) =>
+          `<div class="legend-row"><span class="legend-swatch" style="background:${it.color}"></span>${escapeHtml(it.name)}</div>`
+        ).join("");
+      } catch (_) {
+        if (seq !== zoningLegendSeq) return;
+        list.innerHTML = `<div class="legend-empty">범례를 불러오지 못했습니다.</div>`;
+      }
+    }
+    map.on("moveend", () => {
+      if (document.querySelector(".mapType:checked").value === "zoning") scheduleZoningLegend();
+    });
 
     function updateCadastreOverlay() {
       const checkbox = $("showCadastre");
@@ -1672,16 +1705,18 @@
       }
     }
 
-    function updateMarkers(lat, lon, address, refined, radius) {
+    function updateMarkers(lat, lon, jibunAddr, roadAddr, radius) {
       const next = [lat, lon];
       dotMarker.setLatLng(next);
       labelMarker.remove();
       circle.setLatLng(next);
       circle.setRadius(radius);
       updateRadiusPreview();
+      const big = (jibunAddr || "").trim() || "위치";
+      const small = (roadAddr || "").trim();
       const dynamicLabel = L.divIcon({
         className: "pin-label-icon",
-        html: `<div class='pin-label'>${address}<small>${refined}</small></div>`,
+        html: `<div class='pin-label'>${big}${small ? `<small>${small}</small>` : ""}</div>`,
         iconSize: null,
         iconAnchor: [0, 0]
       });
@@ -1703,7 +1738,7 @@
         if (!json.ok) throw new Error(json.error || "주소 변환 실패");
         lastGeo = json;
         lastGeoAddress = data.address;
-        updateMarkers(json.lat, json.lon, data.address, json.refined, data.mapRadius);
+        updateMarkers(json.lat, json.lon, json.jibunAddr || json.refined || data.address, json.roadAddr || "", data.mapRadius);
         renderPreview(data);
         const keyNote = data.apiKey ? "VWorld API 키 사용" : "API 키 없이 기본 주소 변환 사용";
         const mapTypeName = { satellite: "위성지도", street: "일반지도", blank: "백지도", cadastre: "지적도(백지도+지적선)" }[data.mapType];
@@ -1754,7 +1789,7 @@
           if (!json || !json.ok) return;
           lastGeo = json;
           lastGeoAddress = address;
-          updateMarkers(json.lat, json.lon, address, json.refined, r);
+          updateMarkers(json.lat, json.lon, json.jibunAddr || json.refined || address, json.roadAddr || "", r);
           status(`위치도 자동 갱신\n반경: ${r}m\n좌표: ${json.lat.toFixed(7)}, ${json.lon.toFixed(7)}\n정제 주소: ${json.refined}`);
         } else {
           // 반경만 바뀜 → 원만 갱신(재중심 없음)
