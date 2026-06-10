@@ -1073,7 +1073,7 @@
           <div class="field" style="margin-top:10px;border-top:1px dashed var(--line);padding-top:12px">
             <label for="surveyListFile">또는 지번 목록 엑셀 첨부 (.xlsx/.csv/.txt)</label>
             <input id="surveyListFile" type="file" accept=".xlsx,.csv,.txt">
-            <p class="hint" style="margin:6px 0 0">‘<b>주소</b>’ 열(예: <i>서울특별시 강남구 삼성동 161-7</i>) 또는 ‘<b>소재지</b>’+‘<b>지번</b>’ 열을 넣으면 자동으로 좌표를 찾아 조서를 채웁니다.</p>
+            <p class="hint" style="margin:6px 0 0">‘<b>주소</b>’ 열(예: <i>서울특별시 강남구 삼성동 161-7</i>) 또는 ‘<b>소재지</b>’+‘<b>지번</b>’ 열을 넣으면 자동으로 좌표를 찾아 조서를 채웁니다. 지번이 이상하거나 주소로 못 찾을 땐 ‘<b>PNU</b>’ 열(19자리 고유번호)을 넣으면 정확히 조회합니다(있으면 우선 사용). 제목·메모 행이 위에 있어도 헤더를 자동 인식합니다.</p>
           </div>
           <div class="actions" style="grid-template-columns:1fr">
             <button id="makeSurveyFile" class="small-button" type="button">엑셀로 조서 만들기</button>

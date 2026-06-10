@@ -559,6 +559,40 @@ def get_parcel_feature(lat, lon, api_key):
     raise ValueError(f"선택한 위치의 지적도 도형을 찾지 못했습니다: {last_error}")
 
 
+def get_parcel_feature_by_pnu(pnu, api_key):
+    """PNU(19자리)로 연속지적 필지 도형·속성을 조회한다. 못 찾으면 None."""
+    pnu = re.sub(r"\D", "", str(pnu or ""))
+    if len(pnu) != 19 or not api_key:
+        return None
+    # VWorld WFS는 attrFilter/CQL을 무시하므로 OGC FILTER(xml)로 pnu 등치 필터.
+    # pnu는 숫자만 남겨 두었으므로 XML 이스케이프 불필요.
+    flt = (f"<Filter><PropertyIsEqualTo><PropertyName>pnu</PropertyName>"
+           f"<Literal>{pnu}</Literal></PropertyIsEqualTo></Filter>")
+    last_error = None
+    for typename in ("lp_pa_cbnd_bubun", "lp_pa_cbnd_bonbun"):
+        params = {
+            "REQUEST": "GetFeature",
+            "TYPENAME": typename,
+            "VERSION": "1.1.0",
+            "MAXFEATURES": "5",
+            "SRSNAME": "EPSG:4326",
+            "OUTPUT": "json",
+            "FILTER": flt,
+            "KEY": api_key,
+            "DOMAIN": current_vworld_domain(),
+        }
+        try:
+            data = http_get_json("https://api.vworld.kr/req/wfs", params)
+        except Exception as exc:
+            last_error = exc
+            continue
+        features = data.get("features") or []
+        if features:
+            return {"type": "FeatureCollection", "features": [features[0]]}
+        last_error = data
+    return None
+
+
 def geometry_rings(geometry):
     coords = (geometry or {}).get("coordinates") or []
     geom_type = (geometry or {}).get("type")
@@ -2339,25 +2373,32 @@ def _survey_row_address(r):
 
 
 def survey_items_from_file(upload, api_key):
-    """지번 목록 엑셀/CSV를 파싱해 조서 대상 필지(주소→좌표) 목록을 만든다."""
+    """지번 목록 엑셀/CSV를 파싱해 조서 대상 필지 목록을 만든다.
+    PNU(19자리) 열이 있으면 우선 사용(지번이 이상해도 정확). 없으면 주소→좌표.
+    """
     raw_rows = parse_block_height_rows(upload)
     items = []
     for r in raw_rows:
+        pnu = re.sub(r"\D", "", str(row_value(r, ["pnu", "고유번호", "필지고유번호", "토지고유번호"]) or ""))
         addr = _survey_row_address(r)
+        if len(pnu) == 19:
+            # PNU가 가장 확실 → 지오코딩 없이 PNU로 직접 조회
+            items.append({"parcel": addr or f"PNU {pnu}", "pnu": pnu})
+            continue
         if not addr:
             continue
-        item = {"parcel": addr}
+        item = {"parcel": addr, "pnu": ""}
         try:
             lat, lon, _ = geocode(addr, api_key)
             item["lat"], item["lon"] = lat, lon
         except Exception:
-            item["error"] = "주소를 좌표로 변환하지 못했습니다"
+            item["error"] = "주소를 좌표로 변환하지 못했습니다(PNU 열을 넣으면 정확히 찾습니다)"
         items.append(item)
     if not items:
         cols = sorted({k for r in raw_rows for k in r.keys()}) if raw_rows else []
         hint = f" (인식된 열: {', '.join(cols)})" if cols else ""
         raise ValueError(
-            "엑셀에서 주소/지번 열을 찾지 못했습니다. '주소'(또는 '소재지'+'지번') 열이 필요합니다." + hint
+            "엑셀에서 주소/지번/PNU 열을 찾지 못했습니다. '주소'(또는 '소재지'+'지번') 또는 'PNU' 열이 필요합니다." + hint
         )
     return items
 
@@ -2378,17 +2419,28 @@ def build_parcel_survey(payload):
     fail_count = 0
     for idx, item in enumerate(items, 1):
         label = str(item.get("parcel") or "").strip()
+        pnu_in = re.sub(r"\D", "", str(item.get("pnu") or ""))
         try:
-            if item.get("error"):
-                raise ValueError(item["error"])
-            if item.get("lat") is None or item.get("lon") is None:
-                raise ValueError("좌표가 없습니다")
-            m_lat = float(item.get("lat"))
-            m_lon = float(item.get("lon"))
-            feats = (get_parcel_feature(m_lat, m_lon, api_key) or {}).get("features") or []
-            if not feats:
-                raise ValueError("해당 위치에서 필지를 찾지 못했습니다")
-            feature = feats[0]
+            feature = None
+            if len(pnu_in) == 19:
+                # PNU 우선(지번이 이상해도 정확)
+                res = get_parcel_feature_by_pnu(pnu_in, api_key)
+                feats = (res or {}).get("features") or []
+                if feats:
+                    feature = feats[0]
+                elif not (item.get("lat") is not None and item.get("lon") is not None):
+                    raise ValueError(f"PNU {pnu_in}로 필지를 찾지 못했습니다")
+            if feature is None:
+                if item.get("error"):
+                    raise ValueError(item["error"])
+                if item.get("lat") is None or item.get("lon") is None:
+                    raise ValueError("주소/PNU로 필지를 찾지 못했습니다")
+                m_lat = float(item.get("lat"))
+                m_lon = float(item.get("lon"))
+                feats = (get_parcel_feature(m_lat, m_lon, api_key) or {}).get("features") or []
+                if not feats:
+                    raise ValueError("해당 위치에서 필지를 찾지 못했습니다")
+                feature = feats[0]
             props = feature.get("properties") or {}
             pnu = str(props.get("pnu") or "").strip()
             geom_area = feature_geom_area(feature) or None
