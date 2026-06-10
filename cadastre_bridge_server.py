@@ -2084,6 +2084,47 @@ def row_value(row, aliases, default=None):
     return default
 
 
+# 표 헤더 자동 인식용 키워드(필지 조서·평균높이 양쪽 열 포함).
+KNOWN_HEADER_KEYS = {
+    "주소", "소재지", "소재지지번", "소재지번", "소재", "위치", "address", "addr",
+    "지번", "번지", "필지", "필지명", "parcel", "lot", "pnu",
+    "지목", "소유구분", "용도지역",
+    "면적", "대지면적", "필지면적", "공부면적", "도형면적", "sitearea", "lotarea", "area",
+    "건폐율", "coverage", "coverageratio", "도로폭", "도로너비", "접도폭", "도로폭원", "roadwidth", "road",
+    "접도길이", "전면폭", "필지폭", "frontage", "width", "필지깊이", "대지깊이", "깊이", "depth", "lotdepth",
+    "평균높이", "사선평균높이", "높이", "최저높이", "최고높이", "avgheight", "height", "maxheight", "minheight",
+    "시도", "광역시도", "sido", "시군구", "군구", "sigungu",
+    "읍면동", "법정동", "행정동", "동", "리", "emd",
+}
+
+
+def _pick_header_index(matrix):
+    """알려진 헤더 키워드가 가장 많은 행을 헤더로 선택(제목/안내 행·선행 공백 행 무시)."""
+    best_i, best_score = None, 0
+    for i, row in enumerate(matrix[:25]):
+        score = sum(1 for c in row if normalize_header(c) in KNOWN_HEADER_KEYS)
+        if score > best_score:
+            best_score, best_i = score, i
+    if best_i is not None and best_score >= 1:
+        return best_i
+    # 키워드를 못 찾으면: 첫 비어있지 않은 행을 헤더로
+    return next((i for i, row in enumerate(matrix) if any(str(c).strip() for c in row)), None)
+
+
+def _rows_from_matrix(matrix):
+    hi = _pick_header_index(matrix)
+    if hi is None:
+        return []
+    headers = [normalize_header(c) for c in matrix[hi]]
+    rows = []
+    for raw in matrix[hi + 1:]:
+        row = {headers[i]: (str(raw[i]).strip() if i < len(raw) else "")
+               for i in range(len(headers)) if headers[i]}
+        if any(row.values()):
+            rows.append(row)
+    return rows
+
+
 def parse_delimited_table(raw_bytes, suffix):
     text = raw_bytes.decode("utf-8-sig", errors="replace")
     sample = text[:4096]
@@ -2093,13 +2134,8 @@ def parse_delimited_table(raw_bytes, suffix):
         delimiter = dialect.delimiter
     except Exception:
         pass
-    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-    rows = []
-    for item in reader:
-        normalized = {normalize_header(k): (v or "").strip() for k, v in item.items() if k is not None}
-        if any(normalized.values()):
-            rows.append(normalized)
-    return rows
+    matrix = [list(r) for r in csv.reader(io.StringIO(text), delimiter=delimiter)]
+    return _rows_from_matrix(matrix)
 
 
 def parse_xlsx_table(raw_bytes):
@@ -2141,16 +2177,7 @@ def parse_xlsx_table(raw_bytes):
                 values[col] = str(value).strip()
             if max_col >= 0:
                 matrix.append([values.get(i, "") for i in range(max_col + 1)])
-    header_index = next((i for i, row in enumerate(matrix) if any(str(cell).strip() for cell in row)), None)
-    if header_index is None:
-        return []
-    headers = [normalize_header(cell) for cell in matrix[header_index]]
-    rows = []
-    for raw in matrix[header_index + 1:]:
-        row = {headers[i]: raw[i].strip() if i < len(raw) else "" for i in range(len(headers)) if headers[i]}
-        if any(row.values()):
-            rows.append(row)
-    return rows
+    return _rows_from_matrix(matrix)
 
 
 def parse_block_height_rows(upload):
@@ -2288,21 +2315,35 @@ def _fmt_num(value, digits=2):
         return "-"
 
 
+def _survey_row_address(r):
+    """한 행에서 조서용 전체 주소를 조합한다.
+    - '주소/소재지지번/address'(지번 포함형)는 그대로 기준으로 사용.
+    - '소재지/시도/시군구/읍면동'(지역형) + 별도 '지번' 열이면 합쳐서 완전 주소 생성.
+    """
+    jibun = str(row_value(r, ["지번", "번지", "parcel", "lot"]) or "").strip()
+    full = row_value(r, ["주소", "소재지지번", "소재지번", "address", "addr", "위치"])
+    if full:
+        addr = str(full).strip()
+        # 전체주소 열에 지번이 빠져 있고 별도 지번 열이 있으면 보강
+        if jibun and jibun not in addr:
+            addr = f"{addr} {jibun}".strip()
+        return addr
+    region = " ".join(
+        str(x).strip() for x in [
+            row_value(r, ["시도", "광역시도", "sido"]),
+            row_value(r, ["시군구", "군구", "sigungu"]),
+            row_value(r, ["소재지", "소재", "읍면동", "법정동", "행정동", "동", "리", "emd"]),
+        ] if x and str(x).strip()
+    )
+    return " ".join(p for p in [region, jibun] if p).strip()
+
+
 def survey_items_from_file(upload, api_key):
     """지번 목록 엑셀/CSV를 파싱해 조서 대상 필지(주소→좌표) 목록을 만든다."""
     raw_rows = parse_block_height_rows(upload)
     items = []
     for r in raw_rows:
-        addr = row_value(r, ["주소", "소재지", "소재지지번", "소재", "위치", "address", "addr"])
-        if not addr:
-            parts = [
-                row_value(r, ["시도", "광역시도", "sido"]),
-                row_value(r, ["시군구", "군구", "sigungu"]),
-                row_value(r, ["읍면동", "법정동", "행정동", "동", "리", "emd"]),
-                row_value(r, ["지번", "번지", "parcel", "lot", "pnu"]),
-            ]
-            addr = " ".join(str(p).strip() for p in parts if p and str(p).strip())
-        addr = str(addr or "").strip()
+        addr = _survey_row_address(r)
         if not addr:
             continue
         item = {"parcel": addr}
@@ -2313,7 +2354,11 @@ def survey_items_from_file(upload, api_key):
             item["error"] = "주소를 좌표로 변환하지 못했습니다"
         items.append(item)
     if not items:
-        raise ValueError("엑셀에서 주소/지번 열을 찾지 못했습니다. '주소'(또는 '소재지'+'지번') 열이 필요합니다.")
+        cols = sorted({k for r in raw_rows for k in r.keys()}) if raw_rows else []
+        hint = f" (인식된 열: {', '.join(cols)})" if cols else ""
+        raise ValueError(
+            "엑셀에서 주소/지번 열을 찾지 못했습니다. '주소'(또는 '소재지'+'지번') 열이 필요합니다." + hint
+        )
     return items
 
 
