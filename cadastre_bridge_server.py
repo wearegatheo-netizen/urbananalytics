@@ -1386,7 +1386,7 @@ def analyze_selected_parcels(payload):
         reg_area = member_reg_sum if (use_reg_area and all_have_reg and member_reg_sum > 0) else None
         # 대지면적(산정 기준): 공부면적 있으면 공부, 없으면 도형
         area = reg_area if reg_area else geom_area
-        area_source = "공부면적(토지특성)" if reg_area else "도형면적(연속지적)"
+        area_source = "공부면적(토지특성)" if reg_area else "구적면적(연속지적)"
         projected = project_ring(ring)
         c_lat, c_lon = lonlat_centroid(ring)
 
@@ -2123,7 +2123,7 @@ KNOWN_HEADER_KEYS = {
     "주소", "소재지", "소재지지번", "소재지번", "소재", "위치", "address", "addr",
     "지번", "번지", "필지", "필지명", "parcel", "lot", "pnu",
     "지목", "소유구분", "용도지역",
-    "면적", "대지면적", "필지면적", "공부면적", "도형면적", "sitearea", "lotarea", "area",
+    "면적", "대지면적", "필지면적", "공부면적", "도형면적", "구적면적", "sitearea", "lotarea", "area",
     "건폐율", "coverage", "coverageratio", "도로폭", "도로너비", "접도폭", "도로폭원", "roadwidth", "road",
     "접도길이", "전면폭", "필지폭", "frontage", "width", "필지깊이", "대지깊이", "깊이", "depth", "lotdepth",
     "평균높이", "사선평균높이", "높이", "최저높이", "최고높이", "avgheight", "height", "maxheight", "minheight",
@@ -2532,11 +2532,11 @@ def build_parcel_survey_xlsx(payload):
     ws["A1"].font = title_font
     ws["A2"] = f"생성: {time.strftime('%Y-%m-%d %H:%M')}   ·   필지 수 = {len(rows)}   ·   출처: VWorld 연속지적·토지특성"
     ws["A2"].font = legend_font
-    ws["A3"] = "※ 공부면적·지목·용도지역·개별공시지가는 토지특성(기준연도) 기준, 도형면적은 연속지적 폴리곤 계산값. 공시지가액 = (공부면적 있으면 공부, 없으면 도형) × 개별공시지가."
+    ws["A3"] = "※ 공부면적·지목·용도지역·개별공시지가는 토지특성(기준연도) 기준, 구적면적은 연속지적 폴리곤 계산값. 공시지가액 = (공부면적 있으면 공부, 없으면 구적) × 개별공시지가."
     ws["A3"].font = legend_font
 
     header_row = 5
-    headers = ["연번", "소재지", "지번", "지목", "소유구분", "공부면적(㎡)", "도형면적(㎡)",
+    headers = ["연번", "소재지", "지번", "지목", "소유구분", "공부면적(㎡)", "구적면적(㎡)",
                "용도지역", "개별공시지가(원/㎡)", "공시지가액(원)",
                "이용상황", "기준연도", "PNU", "비고"]
     for c, text in enumerate(headers, 1):
@@ -2623,7 +2623,7 @@ def build_height_report_xlsx(payload):
     ws["A2"] = f"생성: {time.strftime('%Y-%m-%d %H:%M')}   ·   사선계수(도로사선) = {slope}   ·   필지 수 = {len(rows)}"
     ws["A2"].font = legend_font
     legends = [
-        "[산식] 바닥면적 = 대지면적 × 건폐율(%) ÷ 100   (대지면적은 공부면적(토지특성) 있으면 공부, 없으면 도형면적 사용)",
+        "[산식] 바닥면적 = 대지면적 × 건폐율(%) ÷ 100   (대지면적은 공부면적(토지특성) 있으면 공부, 없으면 구적면적 사용)",
         "[산식] (1.5D 도로사선) 최저높이 = 사선계수 × (도로폭 + 전면건축선후퇴)",
         "[산식] 최고높이 = 사선계수 × (도로폭 + 전면건축선후퇴 + (필지깊이 − 후면건축선후퇴))",
         "[산식] 평균높이 = (최저높이 + 최고높이) ÷ 2,   체적 = 바닥면적 × 평균높이,   블록 평균높이 = Σ체적 ÷ Σ바닥면적",
@@ -2641,7 +2641,7 @@ def build_height_report_xlsx(payload):
         "필지깊이(m)", "사선계수", "최저높이(m)", "최고높이(m)", "평균높이(m)", "체적(㎥)",
         "산정방식", "건폐율출처", "신뢰도", "검산(산식·숫자 대입)", "비고",
         "전면후퇴(m)", "후면후퇴(m)", "입지", "용도지역상한(m)", "위계조정후상한(m)", "상한판정",
-        "공부면적(㎡)", "도형면적(㎡)", "면적출처",
+        "공부면적(㎡)", "구적면적(㎡)", "면적출처",
     ]
     ncols = len(headers)
     for c, text in enumerate(headers, 1):
