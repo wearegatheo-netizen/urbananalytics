@@ -2537,7 +2537,7 @@ def build_parcel_survey_xlsx(payload):
 
     header_row = 5
     headers = ["연번", "소재지", "지번", "지목", "소유구분", "공부면적(㎡)", "도형면적(㎡)",
-               "도형-공부 차(%)", "용도지역", "개별공시지가(원/㎡)", "공시지가액(원)",
+               "용도지역", "개별공시지가(원/㎡)", "공시지가액(원)",
                "이용상황", "기준연도", "PNU", "비고"]
     for c, text in enumerate(headers, 1):
         cell = ws.cell(row=header_row, column=c, value=text)
@@ -2545,14 +2545,11 @@ def build_parcel_survey_xlsx(payload):
         cell.fill = head_fill
         cell.alignment = center
         cell.border = border
-    num_cols = {6, 7, 10, 11}   # 공부면적, 도형면적, 개별공시지가, 공시지가액
-    diff_font = Font(color="C0392B", bold=True)
+    num_cols = {6, 7, 9, 10}   # 공부면적, 도형면적, 개별공시지가, 공시지가액
     for i, row in enumerate(rows):
         rr = header_row + 1 + i
-        diff = parse_float(row.get("areaDiffPct"))
-        big_diff = diff is not None and abs(diff) >= 10
         vals = [row.get("no"), row.get("addr"), row.get("jibun"), row.get("jimok"), row.get("owner"),
-                parse_float(row.get("regArea")), parse_float(row.get("geomArea")), diff,
+                parse_float(row.get("regArea")), parse_float(row.get("geomArea")),
                 row.get("zone"), row.get("jiga"), row.get("jigaTotal"),
                 row.get("useSittn"), row.get("year"), row.get("pnu"), row.get("error") or ""]
         for c, v in enumerate(vals, 1):
@@ -2561,22 +2558,15 @@ def build_parcel_survey_xlsx(payload):
             if c in num_cols:
                 cell.number_format = num_fmt if c in (6, 7) else int_fmt
                 cell.alignment = right
-            elif c == 8:                       # 도형-공부 차(%)
-                cell.number_format = '+0.0;-0.0'
-                cell.alignment = right
-                if big_diff:
-                    cell.font = diff_font
             elif c in (1, 5):
                 cell.alignment = center
             else:
                 cell.alignment = left
-            if big_diff and c in (6, 7):
-                cell.font = diff_font
     tr = header_row + 1 + len(rows)
     ws.cell(row=tr, column=1, value="합계").font = Font(bold=True)
     ws.cell(row=tr, column=6, value=parse_float(totals.get("regArea")))
     ws.cell(row=tr, column=7, value=parse_float(totals.get("geomArea")))
-    ws.cell(row=tr, column=11, value=totals.get("jigaTotal"))
+    ws.cell(row=tr, column=10, value=totals.get("jigaTotal"))
     for c in range(1, len(headers) + 1):
         cell = ws.cell(row=tr, column=c)
         cell.border = border
@@ -2585,11 +2575,11 @@ def build_parcel_survey_xlsx(payload):
             cell.number_format = num_fmt
             cell.font = Font(bold=True)
             cell.alignment = right
-        if c == 11:
+        if c == 10:
             cell.number_format = int_fmt
             cell.font = Font(bold=True)
             cell.alignment = right
-    widths = [6, 30, 10, 7, 11, 12, 12, 13, 20, 16, 16, 12, 9, 22, 18]
+    widths = [6, 30, 10, 7, 11, 12, 12, 20, 16, 16, 12, 9, 22, 18]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
